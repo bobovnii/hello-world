@@ -1,0 +1,96 @@
+"""Abstract base class for all scrapers."""
+
+from __future__ import annotations
+
+import logging
+from abc import ABC, abstractmethod
+
+import requests
+
+from src.database.models import Listing, UserCriteria
+from .utils import RateLimiter, get_headers, can_fetch, fetch_page
+
+logger = logging.getLogger(__name__)
+
+
+class BaseScraper(ABC):
+    """Base class for real estate platform scrapers."""
+
+    PLATFORM_NAME: str = ""
+    BASE_URL: str = ""
+
+    def __init__(self, rate_limit_min: float = 2.0, rate_limit_max: float = 5.0):
+        self.session = requests.Session()
+        self.session.headers.update(get_headers())
+        self.rate_limiter = RateLimiter(rate_limit_min, rate_limit_max)
+        self.logger = logging.getLogger(f"scraper.{self.PLATFORM_NAME}")
+
+    def fetch(self, url: str) -> str | None:
+        """Fetch a URL with rate limiting and robots.txt check."""
+        if not can_fetch(url):
+            self.logger.warning(f"Blocked by robots.txt: {url}")
+            return None
+
+        self.rate_limiter.wait()
+        return fetch_page(url, self.session)
+
+    @abstractmethod
+    def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
+        """Build the search URL from user criteria."""
+        ...
+
+    @abstractmethod
+    def parse_search_results(self, html: str) -> list[dict]:
+        """Parse search results HTML into raw listing dicts."""
+        ...
+
+    @abstractmethod
+    def parse_listing_detail(self, html: str, url: str) -> Listing | None:
+        """Parse a single listing detail page into a Listing object."""
+        ...
+
+    def search(
+        self, criteria: UserCriteria, max_pages: int = 5
+    ) -> list[Listing]:
+        """Run a search and return parsed listings."""
+        all_listings: list[Listing] = []
+        seen_urls: set[str] = set()
+
+        for page in range(1, max_pages + 1):
+            url = self.build_search_url(criteria, page)
+            self.logger.info(f"Scraping page {page}: {url}")
+
+            html = self.fetch(url)
+            if not html:
+                self.logger.warning(f"Failed to fetch page {page}, stopping")
+                break
+
+            results = self.parse_search_results(html)
+            if not results:
+                self.logger.info(f"No results on page {page}, stopping")
+                break
+
+            for item in results:
+                detail_url = item.get("url", "")
+                if not detail_url or detail_url in seen_urls:
+                    continue
+                seen_urls.add(detail_url)
+
+                # Try to get full details
+                detail_html = self.fetch(detail_url)
+                if detail_html:
+                    listing = self.parse_listing_detail(detail_html, detail_url)
+                    if listing and listing.price > 0 and listing.size_sqm > 0:
+                        all_listings.append(listing)
+                        self.logger.info(
+                            f"  Found: {listing.title[:50]} - "
+                            f"€{listing.price:,.0f} / {listing.size_sqm}m²"
+                        )
+
+        self.logger.info(
+            f"{self.PLATFORM_NAME}: Found {len(all_listings)} valid listings"
+        )
+        return all_listings
+
+    def close(self):
+        self.session.close()

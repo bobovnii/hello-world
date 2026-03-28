@@ -1,0 +1,54 @@
+scraper:
+  rate_limit_seconds: 3
+  max_retries: 3
+  retry_backoff_factor: 2
+  timeout_seconds: 30
+  max_pages_per_source: 10
+  respect_robots_txt: true
+  cache_ttl_hours: 6
+
+  sources:
+    immoscout:
+      enabled: true
+      base_url: "https://www.immobilienscout24.de"
+      search_path: "/Suche/de/hamburg/hamburg/wohnung-kaufen"
+      needs_playwright: false
+
+    kleinanzeigen:
+      enabled: true
+      base_url: "https://www.kleinanzeigen.de"
+      search_path: "/s-wohnung-kaufen/hamburg"
+      needs_playwright: false
+
+    immowelt:
+      enabled: true
+      base_url: "https://www.immowelt.de"
+      search_path: "/liste/hamburg/wohnungen/kaufen"
+      needs_playwright: true
+
+analyzer:
+  scoring_weights:
+    price_below_market: 0.25
+    rental_yield: 0.25
+    cashflow: 0.20
+    undervalue_signals: 0.15
+    location_trend: 0.15
+
+  thresholds:
+    below_market_pct: 0.85
+    high_yield_bonus_pct: 1.5
+    long_on_market_days: 60
+    min_gross_yield_pct: 4.0
+
+  purchase_costs_pct:
+    grunderwerbsteuer: 5.5
+    notar: 1.5
+    grundbuch: 0.5
+    makler: 3.57
+
+database:
+  path: "data/deals.db"
+
+telegram:
+  alert_schedule_hours: 24
+  max_results_per_message: 5
