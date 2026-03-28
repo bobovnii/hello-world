@@ -98,6 +98,8 @@ class TestSearchURLBuilding:
         url = scraper.build_search_url(criteria)
         assert "kleinanzeigen.de" in url
         assert "hamburg" in url
+        assert "l9409" in url  # Hamburg location ID
+        assert "c196" in url  # Eigentumswohnung category
 
     def test_immowelt_url(self):
         scraper = ImmoweltScraper()

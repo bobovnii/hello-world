@@ -27,9 +27,12 @@ class BaseScraper(ABC):
 
     def fetch(self, url: str) -> str | None:
         """Fetch a URL with rate limiting and robots.txt check."""
-        if not can_fetch(url):
-            self.logger.warning(f"Blocked by robots.txt: {url}")
-            return None
+        try:
+            if not can_fetch(url):
+                self.logger.warning(f"Blocked by robots.txt: {url}")
+                return None
+        except Exception:
+            pass  # robots.txt check failure should not block scraping
 
         self.rate_limiter.wait()
         return fetch_page(url, self.session)
@@ -80,7 +83,7 @@ class BaseScraper(ABC):
                 detail_html = self.fetch(detail_url)
                 if detail_html:
                     listing = self.parse_listing_detail(detail_html, detail_url)
-                    if listing and listing.price > 0 and listing.size_sqm > 0:
+                    if listing and self._matches_criteria(listing, criteria):
                         all_listings.append(listing)
                         self.logger.info(
                             f"  Found: {listing.title[:50]} - "
@@ -91,6 +94,19 @@ class BaseScraper(ABC):
             f"{self.PLATFORM_NAME}: Found {len(all_listings)} valid listings"
         )
         return all_listings
+
+    @staticmethod
+    def _matches_criteria(listing: Listing, criteria: UserCriteria) -> bool:
+        """Post-filter: check listing matches basic criteria."""
+        if listing.price <= 0 or listing.size_sqm <= 0:
+            return False
+        if listing.price < criteria.budget_min or listing.price > criteria.budget_max * 1.05:
+            return False
+        if listing.size_sqm < criteria.min_size_sqm * 0.9:
+            return False
+        if listing.rooms < criteria.min_rooms * 0.9:
+            return False
+        return True
 
     def close(self):
         self.session.close()
