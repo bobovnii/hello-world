@@ -20,8 +20,8 @@ class KleinanzeigenScraper(BaseScraper):
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
         # Categories:
-        #   c196 = Eigentumswohnungen (apartments for sale) - PREFERRED
-        #   c208 = Wohnung kaufen (all property types, misleading name)
+        #   c196 = Eigentumswohnungen (apartments for sale)
+        #   c208 = Wohnung kaufen (all property types incl. houses & MFH)
         #   c209 = Häuser kaufen (houses for sale)
         prop_type = criteria.property_types[0] if criteria.property_types else "apartment"
         if prop_type == "apartment":
@@ -30,6 +30,10 @@ class KleinanzeigenScraper(BaseScraper):
         elif prop_type == "house":
             category = "c209"
             path_segment = "s-haus-kaufen"
+        elif prop_type == "multi_family":
+            # c208 covers MFH/Zinshäuser; filter by price range to get buy listings
+            category = "c208"
+            path_segment = "s-wohnung-kaufen"
         else:
             category = "c208"
             path_segment = "s-wohnung-kaufen"
@@ -123,6 +127,16 @@ class KleinanzeigenScraper(BaseScraper):
         # Description
         desc_el = soup.select_one("#viewad-description-text")
         description = desc_el.get_text(strip=True)[:2000] if desc_el else None
+
+        # Detect MFH from title/description keywords
+        combined_text = f"{title} {description or ''}".lower()
+        mfh_keywords = [
+            "mehrfamilienhaus", "mehrfamilien", "zinshaus", "renditeobjekt",
+            "anlageimmobilie", "wohnanlage", "apartmenthaus", "mietshaus",
+            "kapitalanlage", "wohneinheiten", "mieteinnahmen", "mietobjekt",
+        ]
+        if any(kw in combined_text for kw in mfh_keywords):
+            details["property_type"] = "multi_family"
 
         # Features from page text
         page_text = ((description or "") + " " + soup.get_text()).lower()

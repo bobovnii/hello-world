@@ -29,7 +29,7 @@ class ImmoweltScraper(BaseScraper):
         prop_map = {
             "apartment": "wohnungen",
             "house": "haeuser",
-            "multi_family": "mehrfamilienhaeuser",
+            "multi_family": "haeuser",  # MFH listed under houses on Immowelt
         }
         prop_path = prop_map.get(prop_type, "wohnungen")
 
@@ -76,6 +76,9 @@ class ImmoweltScraper(BaseScraper):
 
             for listing in listings:
                 if listing.url not in seen_urls and self._matches_criteria(listing, criteria):
+                    # For multi-family search, only include MFH listings
+                    if "multi_family" in criteria.property_types and listing.property_type != "multi_family":
+                        continue
                     seen_urls.add(listing.url)
                     all_listings.append(listing)
                     self.logger.info(
@@ -187,13 +190,21 @@ class ImmoweltScraper(BaseScraper):
         energy_el = card.select_one('[data-testid="card-mfe-energy-performance-class"]')
         energy_rating = energy_el.get_text(strip=True) if energy_el else None
 
+        # Detect property type from card text
+        property_type = "apartment"
+        full_text = card.get_text().lower()
+        if "mehrfamilienhaus" in full_text or "anlageimmobilie" in full_text:
+            property_type = "multi_family"
+        elif any(w in full_text for w in ("einfamilienhaus", "doppelhaushälfte", "reihenhaus", "reihenendhaus", "villa")):
+            property_type = "house"
+
         district = detect_district(address, zip_code)
 
         return Listing(
             id=listing_id,
             platform="immowelt",
             url=href,
-            title=title or f"Wohnung in {district}",
+            title=title or f"Immobilie in {district}",
             price=price,
             size_sqm=size,
             rooms=rooms,
@@ -202,6 +213,7 @@ class ImmoweltScraper(BaseScraper):
             zip_code=zip_code,
             floor=floor,
             energy_rating=energy_rating,
+            property_type=property_type,
         )
 
     # These are kept for API compatibility but search() no longer calls them

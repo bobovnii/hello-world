@@ -84,6 +84,9 @@ class BaseScraper(ABC):
                 if detail_html:
                     listing = self.parse_listing_detail(detail_html, detail_url)
                     if listing and self._matches_criteria(listing, criteria):
+                        # For multi-family search, only include MFH listings
+                        if "multi_family" in criteria.property_types and listing.property_type != "multi_family":
+                            continue
                         all_listings.append(listing)
                         self.logger.info(
                             f"  Found: {listing.title[:50]} - "
@@ -104,7 +107,9 @@ class BaseScraper(ABC):
             return False
         if listing.size_sqm < criteria.min_size_sqm * 0.9:
             return False
-        if listing.rooms < criteria.min_rooms * 0.9:
+        # For multi-family, rooms may be absent or represent units, so skip room filter
+        is_mfh = "multi_family" in criteria.property_types or listing.property_type == "multi_family"
+        if not is_mfh and listing.rooms < criteria.min_rooms * 0.9:
             return False
         return True
 
