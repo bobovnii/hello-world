@@ -89,8 +89,8 @@ class TestSearchURLBuilding:
         criteria = UserCriteria(budget_max=300000, min_size_sqm=50, min_rooms=2)
         url = scraper.build_search_url(criteria)
         assert "immobilienscout24.de" in url
-        assert "hamburg" in url
-        assert "wohnung-kaufen" in url
+        assert "apartmentbuy" in url
+        assert "300000" in url
 
     def test_kleinanzeigen_url(self):
         scraper = KleinanzeigenScraper()
@@ -113,5 +113,5 @@ class TestSearchURLBuilding:
         criteria = UserCriteria()
         url_p1 = scraper.build_search_url(criteria, page=1)
         url_p2 = scraper.build_search_url(criteria, page=2)
-        assert "pagenumber" not in url_p1
+        assert "pagenumber=1" in url_p1
         assert "pagenumber=2" in url_p2
