@@ -144,6 +144,46 @@ class KleinanzeigenScraper(BaseScraper):
         garden = "garten" in page_text
         parking = any(w in page_text for w in ("stellplatz", "garage", "parkplatz"))
 
+        # === Extract enriched fields for price justification ===
+        combined = f"{title} {description or ''}".lower()
+
+        # Erbbaurecht detection
+        is_erbbaurecht = any(kw in combined for kw in ("erbbaurecht", "erbpacht", "erbbau"))
+
+        # Rented / Kapitalanlage detection
+        is_rented = any(kw in combined for kw in (
+            "vermietet", "kapitalanlage", "mieteinnahmen", "aktuelle miete",
+            "rendite", "anlageobjekt", "anlageimmobilie",
+        ))
+
+        # Extract actual rent amount if mentioned
+        current_rent = None
+        rent_match = re.search(
+            r"(?:miete|mieteinnahmen|kaltmiete|nkm)[\s:]*(?:ca\.?\s*)?(?:€\s*)?([\d.,]+)\s*(?:€|eur|/mo)",
+            combined,
+        )
+        if not rent_match:
+            rent_match = re.search(r"(\d[\d.]*(?:,\d+)?)\s*(?:€|eur)\s*(?:kalt|netto|monatlich|/mon|p\.?\s*m)", combined)
+        if rent_match:
+            current_rent = clean_price(rent_match.group(1))
+            if current_rent and current_rent > 5000:
+                current_rent = None  # Likely parsed wrong
+
+        # WBS / social housing
+        is_wbs = any(kw in combined for kw in ("wbs", "wohnberechtigungsschein", "sozialbindung", "preisgebunden"))
+
+        # Dachgeschoss
+        is_dachgeschoss = any(kw in combined for kw in ("dachgeschoss", "dachschräge", "spitzboden", "mansarde"))
+
+        # Ausbau needed
+        is_ausbau = any(kw in combined for kw in ("ausbaureserve", "ausbaufähig", "rohbau", "ausbaupotenzial", "entwicklungspotenzial"))
+
+        # Number of units in building
+        num_units = None
+        units_match = re.search(r"(\d+)\s*(?:wohneinheiten|wohnungen|einheiten|parteien|we\b)", combined)
+        if units_match:
+            num_units = int(units_match.group(1))
+
         # Images
         image_urls = []
         for img in soup.select("#viewad-image img, .galleryimage img"):
@@ -170,6 +210,13 @@ class KleinanzeigenScraper(BaseScraper):
             parking=parking,
             description=description,
             image_urls=image_urls[:10],
+            is_erbbaurecht=is_erbbaurecht,
+            is_rented=is_rented,
+            current_rent_monthly=current_rent,
+            is_wbs=is_wbs,
+            is_dachgeschoss=is_dachgeschoss,
+            is_ausbau_needed=is_ausbau,
+            num_units_in_building=num_units,
         )
 
     def _parse_details(self, soup: BeautifulSoup) -> dict:

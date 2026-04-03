@@ -35,6 +35,17 @@ class Listing:
     description: str | None = None
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
     image_urls: list[str] = field(default_factory=list)
+    # Enriched fields for price justification analysis
+    is_erbbaurecht: bool = False  # Leasehold land (Erbpacht) - major price reducer
+    is_rented: bool = False  # Currently tenanted (vermietet) - 20-30% discount
+    current_rent_monthly: float | None = None  # Actual current rent if rented
+    is_wbs: bool = False  # Social housing obligation (Wohnberechtigungsschein)
+    sonderumlage: float | None = None  # Special assessment (one-time WEG levy)
+    num_units_in_building: int | None = None  # Number of units in WEG
+    is_dachgeschoss: bool = False  # Attic apartment (often sloped ceilings)
+    is_ausbau_needed: bool = False  # Expansion/buildout required (raw space)
+    total_floors: int | None = None  # Total floors in building
+    plot_size_sqm: float | None = None  # Grundstücksfläche
 
     @property
     def price_per_sqm(self) -> float:
@@ -53,9 +64,16 @@ class Listing:
         if isinstance(d.get("image_urls"), str):
             d["image_urls"] = json.loads(d["image_urls"])
         # Convert sqlite integer bools
-        for bool_field in ("balcony", "garden", "parking"):
+        for bool_field in (
+            "balcony", "garden", "parking",
+            "is_erbbaurecht", "is_rented", "is_wbs",
+            "is_dachgeschoss", "is_ausbau_needed",
+        ):
             if bool_field in d:
                 d[bool_field] = bool(d[bool_field])
+        # Remove unknown fields that might come from DB
+        known = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)
 
 

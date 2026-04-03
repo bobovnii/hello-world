@@ -199,6 +199,20 @@ class ImmoScoutScraper(BaseScraper):
         eid = item.get("id", "")
         url = f"{self.BASE_URL}/expose/{eid}"
 
+        # Enriched fields from title (IS24 mobile API only gives title + attributes)
+        title_lower = title.lower()
+        is_erbbaurecht = any(kw in title_lower for kw in ("erbbaurecht", "erbpacht", "erbbau"))
+        is_rented = any(kw in title_lower for kw in (
+            "vermietet", "kapitalanlage", "mieteinnahmen", "rendite",
+            "anlageobjekt", "anlageimmobilie",
+        ))
+        is_dachgeschoss = any(kw in title_lower for kw in ("dachgeschoss", "dachschräge", "mansarde"))
+        is_ausbau = any(kw in title_lower for kw in ("ausbaureserve", "ausbaufähig", "ausbau", "entwicklungspotenzial"))
+        is_wbs = any(kw in title_lower for kw in ("wbs", "wohnberechtigungsschein", "sozialbindung"))
+
+        # Private seller flag
+        is_private = item.get("isPrivate", False)
+
         return Listing(
             id=listing_id,
             platform="immoscout",
@@ -213,6 +227,11 @@ class ImmoScoutScraper(BaseScraper):
             energy_rating=energy,
             property_type=property_type,
             listing_date=published,
+            is_erbbaurecht=is_erbbaurecht,
+            is_rented=is_rented,
+            is_dachgeschoss=is_dachgeschoss,
+            is_ausbau_needed=is_ausbau,
+            is_wbs=is_wbs,
         )
 
     # Required by BaseScraper ABC

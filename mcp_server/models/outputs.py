@@ -30,7 +30,19 @@ class DealResult(BaseModel):
     price_vs_market_pct: float = Field(description="Negative means below district average")
     gross_yield_pct: float
     monthly_cashflow: float = Field(description="Monthly cashflow after mortgage, positive = profit")
-    undervalue_reasons: list[str] = Field(default_factory=list)
+    # Red flags and price justification
+    is_erbbaurecht: bool = Field(False, description="Leasehold land - you don't own the ground")
+    is_rented: bool = Field(False, description="Currently tenanted, 20-30% discount typical")
+    current_rent_monthly: float | None = Field(None, description="Actual monthly rent if tenanted")
+    is_wbs: bool = Field(False, description="Social housing obligation, rent capped")
+    is_dachgeschoss: bool = Field(False, description="Attic apartment, sloped ceilings reduce usable space")
+    is_ausbau_needed: bool = Field(False, description="Expansion/buildout needed, listed m² includes unfinished space")
+    energy_rating: str | None = Field(None, description="Energy class A-H, F+ requires mandatory renovation by 2030")
+    year_built: int | None = None
+    # Signals split into opportunities and red flags
+    opportunity_signals: list[str] = Field(default_factory=list, description="Reasons this could be a good deal [+]")
+    red_flags: list[str] = Field(default_factory=list, description="Reasons it's cheap - needs due diligence [!]")
+    undervalue_reasons: list[str] = Field(default_factory=list, description="All signals combined")
 
 
 class SearchJobStatus(BaseModel):

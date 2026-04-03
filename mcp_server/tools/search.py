@@ -53,6 +53,9 @@ def _create_scrapers() -> list:
 
 def _listing_to_deal(listing: Listing, analysis: AnalysisResult) -> DealResult:
     desc = listing.description or ""
+    reasons = analysis.undervalue_reasons
+    opportunities = [r for r in reasons if r.startswith("[+]")]
+    red_flags = [r for r in reasons if r.startswith("[!]")]
     return DealResult(
         listing_id=listing.id,
         title=listing.title,
@@ -70,7 +73,17 @@ def _listing_to_deal(listing: Listing, analysis: AnalysisResult) -> DealResult:
         price_vs_market_pct=analysis.price_vs_market_pct,
         gross_yield_pct=analysis.gross_rental_yield_pct,
         monthly_cashflow=analysis.monthly_cashflow,
-        undervalue_reasons=analysis.undervalue_reasons,
+        is_erbbaurecht=listing.is_erbbaurecht,
+        is_rented=listing.is_rented,
+        current_rent_monthly=listing.current_rent_monthly,
+        is_wbs=listing.is_wbs,
+        is_dachgeschoss=listing.is_dachgeschoss,
+        is_ausbau_needed=listing.is_ausbau_needed,
+        energy_rating=listing.energy_rating,
+        year_built=listing.year_built,
+        opportunity_signals=opportunities,
+        red_flags=red_flags,
+        undervalue_reasons=reasons,
     )
 
 
