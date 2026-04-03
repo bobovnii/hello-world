@@ -190,6 +190,17 @@ class ImmoweltScraper(BaseScraper):
         energy_el = card.select_one('[data-testid="card-mfe-energy-performance-class"]')
         energy_rating = energy_el.get_text(strip=True) if energy_el else None
 
+        # Description snippet from bottom of card (~200 chars)
+        description = None
+        desc_el = card.select_one('[data-testid="cardmfe-bottom-test-id"]')
+        if not desc_el:
+            desc_el = card.select_one('[data-testid="cardmfe-description-text-test-id"]')
+        if desc_el:
+            description = desc_el.get_text(strip=True)
+
+        # Agent/publisher name
+        agent_el = card.select_one('[data-testid="cardmfe-agency-publisher-xl-test-id"]')
+
         # Detect property type from card text
         property_type = "apartment"
         full_text = card.get_text().lower()
@@ -198,13 +209,25 @@ class ImmoweltScraper(BaseScraper):
         elif any(w in full_text for w in ("einfamilienhaus", "doppelhaushälfte", "reihenhaus", "reihenendhaus", "villa")):
             property_type = "house"
 
+        # Detect tags (Neu, etc.)
+        tags = [t.get_text(strip=True) for t in card.select('[data-testid*="cardmfe-tag"]')]
+
+        # Detect features from description/card text
+        balcony = "balkon" in full_text
+        garden = "garten" in full_text
+        parking = any(w in full_text for w in ("stellplatz", "garage", "parkplatz", "tiefgarage"))
+
         district = detect_district(address, zip_code)
+
+        # Build title from property type + address
+        type_label = {"apartment": "Wohnung", "house": "Haus", "multi_family": "Mehrfamilienhaus"}.get(property_type, "Immobilie")
+        title = f"{type_label} in {district}" if district else address
 
         return Listing(
             id=listing_id,
             platform="immowelt",
             url=href,
-            title=title or f"Immobilie in {district}",
+            title=title,
             price=price,
             size_sqm=size,
             rooms=rooms,
@@ -214,6 +237,10 @@ class ImmoweltScraper(BaseScraper):
             floor=floor,
             energy_rating=energy_rating,
             property_type=property_type,
+            description=description,
+            balcony=balcony,
+            garden=garden,
+            parking=parking,
         )
 
     # These are kept for API compatibility but search() no longer calls them

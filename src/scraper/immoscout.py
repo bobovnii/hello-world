@@ -1,9 +1,19 @@
 """ImmoScout24 scraper for Hamburg real estate listings.
 
-ImmoScout24 uses AWS WAF with JavaScript challenges. This scraper uses
-Playwright (headless Chromium) to bypass the bot protection. If Playwright
-is unavailable or the challenge cannot be solved (e.g. datacenter IP),
-it falls back gracefully and logs a warning.
+ImmoScout24 uses AWS WAF with JavaScript challenges that block ALL
+requests from datacenter IPs (401 "Ich bin kein Roboter"). This affects
+both search and detail pages. Tested approaches that DO NOT work from
+datacenter:
+  - requests with any User-Agent
+  - curl_cffi with Chrome/Safari impersonation
+  - cloudscraper
+  - Playwright headless (chromium headless shell)
+
+This scraper uses Playwright with full Chromium to attempt the WAF
+challenge. This ONLY works from residential IPs. From datacenter IPs
+it will fail gracefully with a clear warning.
+
+To use: run from a home network or use a residential proxy service.
 """
 
 from __future__ import annotations
