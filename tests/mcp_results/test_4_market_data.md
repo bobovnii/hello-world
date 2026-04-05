@@ -1,16 +1,16 @@
 # Test 4: Market Data & Investment Estimates
-**Date**: 2026-03-31T08:18:17
+**Date**: 2026-04-05 08:12
 
-## Request 1: get_market_data()
+## Request
 ```
-Tool: get_market_data
-districts: null (all Hamburg)
+Tool: get_market_data(districts=None)  # all Hamburg
+Tool: estimate_investment(200k, 60m², per district)
 ```
 
-## All Districts Overview
+## Hamburg Districts Overview
 
 | District | Avg Price/m² | Avg Rent/m² | Yield | Trend |
-|----------|-------------|-------------|-------|-------|
+|----------|:-----------:|:-----------:|:-----:|:-----:|
 | Altona | EUR 5,800 | EUR 14.50 | 3.0% | rising |
 | Eimsbüttel | EUR 6,200 | EUR 15.00 | 2.9% | stable |
 | Hamburg-Mitte | EUR 5,500 | EUR 14.00 | 3.1% | stable |
@@ -19,20 +19,12 @@ districts: null (all Hamburg)
 | Bergedorf | EUR 3,500 | EUR 10.50 | 3.6% | stable |
 | Harburg | EUR 3,200 | EUR 10.00 | 3.8% | rising |
 
-**Total purchase costs**: 11.07%
+**Purchase costs**: 11.07% (grunderwerbsteuer: 5.5%, notar: 1.5%, grundbuch: 0.5%, makler: 3.57%)
 
-## Request 2: estimate_investment (200k apartment per district)
-```
-Tool: estimate_investment
-purchase_price: 200,000 EUR
-size_sqm: 60
-equity_pct: 20%
-interest_rate: 3.5%
-loan_term: 25 years
-```
+## Investment Estimate: EUR 200k apartment (60m²) per district
 
-| District | Est Rent/mo | Mortgage/mo | Cashflow/mo | Gross Yield | vs Market |
-|----------|-----------|------------|------------|-------------|-----------|
+| District | Rent/mo | Mortgage/mo | Cashflow/mo | Yield | vs Market |
+|----------|:-------:|:-----------:|:-----------:|:-----:|:---------:|
 | Altona | EUR 870 | EUR 890 | EUR -212 | 5.2% | -42% |
 | Eimsbüttel | EUR 900 | EUR 890 | EUR -183 | 5.4% | -46% |
 | Hamburg-Mitte | EUR 840 | EUR 890 | EUR -242 | 5.0% | -39% |

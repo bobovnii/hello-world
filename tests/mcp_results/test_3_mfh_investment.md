@@ -1,108 +1,164 @@
-# Test 3: Mehrfamilienhaus Investment
-**Date**: 2026-03-31T08:18:17
+# Test 3: Mehrfamilienhaus Investment (<1.5M)
+**Date**: 2026-04-05 08:12
 
 ## Request
 ```
-Tool: start_search + get_search_results
-budget_max: 1,500,000 EUR
-budget_min: 300,000 EUR
-min_rooms: 2
-min_size_sqm: 80
-property_type: multi_family
-districts: all Hamburg
-equity_pct: 30%
-risk_tolerance: aggressive
+budget: 300k-1.5M | min_size: 80m² | property_type: multi_family
+risk: aggressive | equity: 30%
 ```
 
 ## Search Metadata
-- **Platforms searched**: immoscout, kleinanzeigen, immowelt, ohne-makler
+- **Platforms OK**: immoscout (0), immowelt (4), ohne-makler (3), kleinanzeigen (5)
 - **Platforms failed**: none
-- **Total listings found**: 5
-- **Duration**: 108s
-- **Deals scored**: 5
+- **Total listings scraped**: 12
+- **Deals scored**: 12
 
 ## Results
-### Deal #1
-- **Title**: Sehr gut vermietete 3 Zimmer Eigentumswohnung für Kapitalanleger in Hamburg-Alstertal
-- **URL**: https://www.ohne-makler.net/immobilie/437478/
-- **Platform**: ohne-makler
-- **Price**: EUR 369,000
-- **Size**: 82.0 m² | **Rooms**: 3.0
-- **District**: Hamburg
-- **Address**: 22395 Hamburg
-							
-								(Sasel)
-- **Property type**: multi_family
-- **Deal Score**: 51.8/100
-- **Price/m²**: EUR 4,500 (-18.2% vs market)
-- **Gross Yield**: 3.73%
-- **Monthly Cashflow**: EUR -910
-- **Description**: Diese schöne und gepflegte 3-Zimmer-Wohnung befindet sich im 2. Obergeschoß (Endetage ohne Dachschrägen) eines dreigeschossigen Mehrfamilienhauses mit 6 Wohnungen. Die 82 qm große Wohnung ist sehr gut
-- **Undervalue Signals**:
-  - Price 18% below district average (€4500/m² vs €5500/m²)
-  - Price significantly below implied value (€369,000 vs est. €459,200)
 
-### Deal #2
-- **Title**: Wellingsbüttel, Hamburg (22391)
-- **URL**: https://www.immowelt.de/expose/ce5f9977-af01-4f36-85ca-0b9f27802b63
-- **Platform**: immowelt
-- **Price**: EUR 1,250,000
-- **Size**: 210.0 m² | **Rooms**: 5.0
-- **District**: Hamburg
-- **Address**: Wellingsbüttel, Hamburg (22391)
-- **Property type**: multi_family
-- **Deal Score**: 21.5/100
-- **Price/m²**: EUR 5,952 (+8.2% vs market)
-- **Gross Yield**: 2.82%
-- **Monthly Cashflow**: EUR -3,055
+### Deal #1 — Score: 65/100
 
-### Deal #3
-- **Title**: Provisionsfrei in Nienstedten: 4 Zimmer und großer Garten
-- **URL**: https://www.ohne-makler.net/immobilie/437138/
-- **Platform**: ohne-makler
-- **Price**: EUR 755,000
-- **Size**: 126.0 m² | **Rooms**: 4.0
-- **District**: Hamburg
-- **Address**: 22609 Hamburg
-							
-								(Osdorf)
-- **Property type**: multi_family
-- **Deal Score**: 21.2/100
-- **Price/m²**: EUR 5,992 (+8.9% vs market)
-- **Gross Yield**: 2.80%
-- **Monthly Cashflow**: EUR -2,477
-- **Description**: Die angebotene Eigentumswohnung liegt in ruhiger Wohnlage im Hochparterre eines 1967 errichteten, gepflegten Rotklinkerhauses mit sechs Wohneinheiten. Die Wohnung ist aktuell in vier Zimmer aufgeteilt
+| Field | Value |
+|-------|-------|
+| **Title** | Viel Platz für Ihre Ideen: Neubau inkl. Grundstück! |
+| **URL** | https://www.kleinanzeigen.de/s-anzeige/viel-platz-fuer-ihre-ideen-neubau-inkl-grundstueck-/3306883158-208-9507 |
+| **Platform** | kleinanzeigen |
+| **Price** | EUR 739,005 |
+| **Size** | 162 m² |
+| **Rooms** | 4.0 |
+| **District** | Altona |
+| **Address** | 22559 Altona - Hamburg Rissen |
 
-### Deal #4
-- **Title**: Großzügiges Ein-/Zweifamilienhaus in bester Lage mit tollem Garten
-- **URL**: https://www.ohne-makler.net/immobilie/438641/
-- **Platform**: ohne-makler
-- **Price**: EUR 979,000
-- **Size**: 200.0 m² | **Rooms**: 6.0
-- **District**: Harburg
-- **Address**: 21149 Hamburg
-							
-								(Neugraben-Fischbek)
-- **Property type**: multi_family
-- **Deal Score**: 20.1/100
-- **Price/m²**: EUR 4,895 (+53.0% vs market)
-- **Gross Yield**: 2.45%
-- **Monthly Cashflow**: EUR -2,686
-- **Description**: Das Haus ist auf einem schönen und absolut ruhigen Waldgrundstück am Ende einer Sackgasse gelegen.Durch die Hanglage sind zwei Eingänge - im Obergeschoss und im Erd- bzw. Gartengeschoss - und somit au
+**Financial Metrics:**
+- Price/m²: EUR 4,553 (district avg: EUR 5,800) = **-22%**
+- Gross Yield: 3.82%
+- Monthly Cashflow: EUR -1,209
 
-### Deal #5
-- **Title**: Wohnen in der City und leben im Grünen - Am Ziegelteich Brick 66
-- **URL**: https://www.ohne-makler.net/immobilie/439585/
-- **Platform**: ohne-makler
-- **Price**: EUR 642,500
-- **Size**: 75.18 m² | **Rooms**: 3.0
-- **District**: Hamburg
-- **Address**: 22525 Hamburg
+**Opportunities (+):**
+- [+] Price 22% below district average (€4553/m² vs €5800/m²)
+- [+] Below market in rising district (Altona) - appreciation potential
+- [+] Price below implied value (€739,005 vs est. €941,456)
+
+**Description:** # ObjektbeschreibungEine geringe Grundfläche bei maximalem Wohnkomfort - das bietet unser Doppelhaus 08 und eignet sich damit perfekt für kleine Grundstücke. Das dreigeschossige Gebäude mit Pultdach überzeugt nicht nur durch sein durchdachtes Raumkonzept, sondern auch mit einer außergewöhnlichen Arc...
+
+---
+
+### Deal #2 — Score: 65/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Mehrfamilienhaus in Wandsbek |
+| **URL** | https://www.immowelt.de/expose/f78994c7-6537-4c9a-a28b-b847ecdbb96c |
+| **Platform** | immowelt |
+| **Price** | EUR 498,000 |
+| **Size** | 153 m² |
+| **Rooms** | 6.0 |
+| **District** | Wandsbek |
+| **Address** | Rahlstedt, Hamburg / Rahlstedt (22149) |
+| **Energy rating** | B |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,263 (district avg: EUR 4,200) = **-22%**
+- Gross Yield: 4.23%
+- Monthly Cashflow: EUR -651
+
+**Opportunities (+):**
+- [+] Price 22% below district average (€3263/m² vs €4200/m²)
+- [+] Below market in rising district (Wandsbek) - appreciation potential
+- [+] Price below implied value (€498,000 vs est. €701,960)
+
+**Description:** In ruhiger Wohnlage von Hamburg-Rahlstedt präsentiert sich dieses gepflegte Zweifamilienhaus mit zwei separaten Einheiten, das vielseitige Nutzungsmöglichkeiten bietet - ideal für die große Familie, ......
+
+---
+
+### Deal #3 — Score: 61/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Kernsanierte 3-Zimmer Wohnung mit Balkon in ruhiger Lage von Hamburg- Lurup |
+| **URL** | https://www.ohne-makler.net/immobilie/443366/ |
+| **Platform** | ohne-makler |
+| **Price** | EUR 324,000 |
+| **Size** | 76 m² |
+| **Rooms** | 3.0 |
+| **District** | Hamburg |
+| **Address** | 22547 Hamburg
 							
-								(Stellingen)
-- **Property type**: multi_family
-- **Deal Score**: 16.0/100
-- **Price/m²**: EUR 8,546 (+55.4% vs market)
-- **Gross Yield**: 1.97%
-- **Monthly Cashflow**: EUR -2,254
-- **Description**: Das im Jahr 2024/2025 neu errichtete Mehrfamilienhaus mit insgesamt 4 Wohneinheiten erstreckt sich über 382 Quadratmeter Wohnfläche. Die letzte, frei verfügbare 3-Zimmerwohnung mit 75,18 m² Wohnfläche
+								(Lurup) |
+| **Year built** | 1971 |
+| **Energy rating** | D |
+| **Hausgeld** | EUR 549/mo |
+
+**Financial Metrics:**
+- Price/m²: EUR 4,263 (district avg: EUR 5,500) = **-22%**
+- Gross Yield: 3.94%
+- Monthly Cashflow: EUR -1,048
+
+**Opportunities (+):**
+- [+] Price 22% below district average (€4263/m² vs €5500/m²)
+- [+] Price below implied value (€324,000 vs est. €425,600)
+
+**Red Flags (!):**
+- [!] HIGH HAUSGELD: €549/mo (€7.2/m² - above typical 2.50-3.50€/m²). Eats into cashflow. Check what's included and if Sonderumlage is pending
+
+**Description:** Zum Verkauf steht eine großzügige 3-Zimmer-Wohnung mit ca. 76 m² Wohnfläche in ruhiger und grüner Lage von Hamburg (Jevenstedter Straße 55). Ein Kellerabteil gehört ebenfalls dazu.Im Zuge der Renovierung wurden bereits zahlreiche Modernisierungsmaßnahmen durchgeführt:Neue Elektrik in der gesamten Wo...
+
+---
+
+### Deal #4 — Score: 53/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Großzügiges Wohnhaus mit klassischem Charme und zwei Wohneinheiten in begehrter Lage von Rahlstedt |
+| **URL** | https://www.kleinanzeigen.de/s-anzeige/grosszuegiges-wohnhaus-mit-klassischem-charme-und-zwei-wohneinheiten-in-begehrter-lage-von-rahlstedt/3319171035-208-9455 |
+| **Platform** | kleinanzeigen |
+| **Price** | EUR 1,098,000 |
+| **Size** | 293 m² |
+| **Rooms** | 8.0 |
+| **District** | Wandsbek |
+| **Address** | 22143 Wandsbek - Hamburg Rahlstedt |
+| **Year built** | 1905 |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,754 (district avg: EUR 4,200) = **-11%**
+- Gross Yield: 3.68%
+- Monthly Cashflow: EUR -1,926
+
+**Flags:** `DACHGESCHOSS`
+
+**Opportunities (+):**
+- [+] Below market in rising district (Wandsbek) - appreciation potential
+- [+] Price below implied value (€1,098,000 vs est. €1,345,592)
+
+**Red Flags (!):**
+- [!] ATTIC APARTMENT (Dachgeschoss) - sloped ceilings reduce usable space. WoFlV: areas under 1m height don't count, 1-2m count 50%. Check if m² is Wohnfläche (WoFlV) or gross area (DIN 277)
+
+**Description:** # ObjektbeschreibungDieses großzügige Wohnhaus aus dem Jahr 1905 befindet sich auf einem ca. 1.029 m² großen Grundstück in begehrter Lage von Hamburg-Rahlstedt. Die Immobilie verbindet den Charme eines historisch gewachsenen Gebäudes mit einer klaren, funktionalen Raumstruktur und bietet vielseitige...
+
+---
+
+### Deal #5 — Score: 51/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Mehrfamilienhaus in Wandsbek |
+| **URL** | https://www.immowelt.de/expose/7c0d84d6-7adf-462d-8d0e-8444586c6b4e |
+| **Platform** | immowelt |
+| **Price** | EUR 795,000 |
+| **Size** | 220 m² |
+| **Rooms** | 9.0 |
+| **District** | Wandsbek |
+| **Address** | Rahlstedt, Hamburg / Rahlstedt (22143) |
+| **Energy rating** | C |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,619 (district avg: EUR 4,200) = **-14%**
+- Gross Yield: 3.81%
+- Monthly Cashflow: EUR -1,306
+
+**Opportunities (+):**
+- [+] Below market in rising district (Wandsbek) - appreciation potential
+- [+] Price below implied value (€795,000 vs est. €1,010,620)
+
+**Description:** Diese beeindruckende Jugendstilvilla aus dem Jahr 1910 bietet eine seltene Gelegenheit, ein Stück Geschichte zu erwerben. Auf einem großzügigen Grundstück von ca. 894 m² gelegen, erstreckt sich die W......
+
+---

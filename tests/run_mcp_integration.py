@@ -1,89 +1,27 @@
 #!/usr/bin/env python3
-"""MCP Server integration tests - simulates agent tool calls and saves results."""
+"""MCP integration tests v2 - with enriched red flag analysis."""
 
 import asyncio
 import json
 import sys
 import os
-import time
 from datetime import datetime
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp_server.context import app_lifespan
-from mcp_server.jobs import JobStore
-from mcp_server.models.outputs import *
-from src.database.models import UserCriteria
+from src.database.models import UserCriteria, Listing, AnalysisResult
 from src.analyzer.market_data import HamburgMarketData
 from src.analyzer.scorer import DealScorer
+from src.scraper.immoscout import ImmoScoutScraper
+from src.scraper.kleinanzeigen import KleinanzeigenScraper
+from src.scraper.immowelt import ImmoweltScraper
+from src.scraper.ohne_makler import OhneMaklerScraper
 
 
-class MockContext:
-    """Simulates MCP Context for direct tool testing."""
-    def __init__(self, lifespan_ctx):
-        self.request_context = type('RC', (), {'lifespan_context': lifespan_ctx})()
-
-
-def format_deal(d: DealResult, idx: int) -> str:
-    lines = [
-        f"### Deal #{idx}",
-        f"- **Title**: {d.title}",
-        f"- **URL**: {d.url}",
-        f"- **Platform**: {d.platform}",
-        f"- **Price**: EUR {d.price:,.0f}",
-        f"- **Size**: {d.size_sqm} m² | **Rooms**: {d.rooms}",
-        f"- **District**: {d.district}",
-        f"- **Address**: {d.address}",
-        f"- **Property type**: {d.property_type}",
-        f"- **Deal Score**: {d.deal_score}/100",
-        f"- **Price/m²**: EUR {d.price_per_sqm:,.0f} ({d.price_vs_market_pct:+.1f}% vs market)",
-        f"- **Gross Yield**: {d.gross_yield_pct:.2f}%",
-        f"- **Monthly Cashflow**: EUR {d.monthly_cashflow:+,.0f}",
-    ]
-    if d.description_snippet:
-        lines.append(f"- **Description**: {d.description_snippet}")
-    if d.undervalue_reasons:
-        lines.append("- **Undervalue Signals**:")
-        for r in d.undervalue_reasons:
-            lines.append(f"  - {r}")
-    return "\n".join(lines)
-
-
-def format_analysis(a: DealAnalysis) -> str:
-    lines = [
-        format_deal(a.listing, 1),
-        "",
-        "#### Full Financial Analysis",
-        f"- Total Purchase Cost: EUR {a.total_purchase_cost:,.0f}",
-        f"- Equity Required: EUR {a.equity_required:,.0f}",
-        f"- Mortgage Payment: EUR {a.mortgage_monthly:,.0f}/mo",
-        f"- Estimated Rent: EUR {a.estimated_rent_monthly:,.0f}/mo",
-        f"- Net Yield: {a.net_yield_pct:.2f}%",
-        f"- Cap Rate: {a.cap_rate_pct:.2f}%",
-        f"- Cash-on-Cash Return: {a.cash_on_cash_return_pct:.2f}%",
-        f"- District Avg Price/m²: EUR {a.district_avg_price_sqm:,.0f}",
-    ]
-    if a.year_built:
-        lines.append(f"- Year Built: {a.year_built}")
-    if a.condition:
-        lines.append(f"- Condition: {a.condition}")
-    if a.features:
-        lines.append(f"- Features: {', '.join(a.features)}")
-    if a.description:
-        lines.append(f"- **Full Description**: {a.description[:500]}...")
-    return "\n".join(lines)
-
-
-async def run_search_and_wait(job_store, scorer, criteria, max_results=10,
-                               equity_pct=20, interest_rate_pct=3.5,
-                               loan_term_years=25, risk_tolerance="moderate"):
-    """Start a search job and wait for completion."""
-    from src.scraper.immoscout import ImmoScoutScraper
-    from src.scraper.kleinanzeigen import KleinanzeigenScraper
-    from src.scraper.immowelt import ImmoweltScraper
-    from src.scraper.ohne_makler import OhneMaklerScraper
-
+def run_search(criteria, max_pages=2):
+    """Run all scrapers and return scored results."""
     scrapers = [
         ImmoScoutScraper(rate_limit_min=1, rate_limit_max=2),
         KleinanzeigenScraper(rate_limit_min=2, rate_limit_max=3),
@@ -91,377 +29,299 @@ async def run_search_and_wait(job_store, scorer, criteria, max_results=10,
         OhneMaklerScraper(rate_limit_min=2, rate_limit_max=3),
     ]
 
-    job = job_store.start_job(criteria, scrapers)
-    print(f"  Job {job.job_id} started...")
+    all_listings = []
+    platforms_ok = []
+    platforms_fail = []
 
-    # Wait for completion
-    for _ in range(120):
-        await asyncio.sleep(1)
-        if job.status != "running":
-            break
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(s.search, criteria, max_pages): s for s in scrapers}
+        for future in as_completed(futures):
+            scraper = futures[future]
+            try:
+                listings = future.result(timeout=180)
+                all_listings.extend(listings)
+                platforms_ok.append(f"{scraper.PLATFORM_NAME} ({len(listings)})")
+            except Exception as e:
+                platforms_fail.append(f"{scraper.PLATFORM_NAME} ({str(e)[:50]})")
+            finally:
+                scraper.close()
 
-    print(f"  Job {job.status}: {job.progress_message} ({job.duration_seconds:.0f}s)")
+    market = HamburgMarketData()
+    scorer = DealScorer(market)
+    results = scorer.score_and_rank(all_listings, criteria)
 
-    # Score results
-    from mcp_server.tools.search import _score_job_results
-    deals = _score_job_results(
-        job, scorer, equity_pct, interest_rate_pct,
-        loan_term_years, risk_tolerance, max_results,
+    return all_listings, results, platforms_ok, platforms_fail
+
+
+def format_deal_md(listing: Listing, analysis: AnalysisResult, idx: int) -> str:
+    """Format a deal as markdown with enriched signals."""
+    opp = [r for r in analysis.undervalue_reasons if r.startswith("[+]")]
+    flags = [r for r in analysis.undervalue_reasons if r.startswith("[!]")]
+
+    lines = [f"### Deal #{idx} — Score: {analysis.deal_score:.0f}/100"]
+
+    # Header table
+    lines.append("")
+    lines.append("| Field | Value |")
+    lines.append("|-------|-------|")
+    lines.append(f"| **Title** | {listing.title} |")
+    lines.append(f"| **URL** | {listing.url} |")
+    lines.append(f"| **Platform** | {listing.platform} |")
+    lines.append(f"| **Price** | EUR {listing.price:,.0f} |")
+    lines.append(f"| **Size** | {listing.size_sqm:.0f} m² |")
+    lines.append(f"| **Rooms** | {listing.rooms:.1f} |")
+    lines.append(f"| **District** | {listing.district} |")
+    lines.append(f"| **Address** | {listing.address} |")
+    if listing.year_built:
+        lines.append(f"| **Year built** | {listing.year_built} |")
+    if listing.condition:
+        lines.append(f"| **Condition** | {listing.condition} |")
+    if listing.energy_rating:
+        lines.append(f"| **Energy rating** | {listing.energy_rating} |")
+    if listing.hausgeld:
+        lines.append(f"| **Hausgeld** | EUR {listing.hausgeld:,.0f}/mo |")
+
+    # Financial metrics
+    lines.append("")
+    lines.append("**Financial Metrics:**")
+    lines.append(f"- Price/m²: EUR {analysis.price_per_sqm:,.0f} (district avg: EUR {analysis.district_avg_price_sqm:,.0f}) = **{analysis.price_vs_market_pct:+.0f}%**")
+    lines.append(f"- Gross Yield: {analysis.gross_rental_yield_pct:.2f}%")
+    lines.append(f"- Monthly Cashflow: EUR {analysis.monthly_cashflow:+,.0f}")
+
+    # Red flag indicators
+    flag_badges = []
+    if listing.is_erbbaurecht:
+        flag_badges.append("ERBBAURECHT")
+    if listing.is_rented:
+        rent_str = f" EUR {listing.current_rent_monthly:,.0f}/mo" if listing.current_rent_monthly else ""
+        flag_badges.append(f"TENANTED{rent_str}")
+    if listing.is_wbs:
+        flag_badges.append("WBS")
+    if listing.is_dachgeschoss:
+        flag_badges.append("DACHGESCHOSS")
+    if listing.is_ausbau_needed:
+        flag_badges.append("AUSBAU NEEDED")
+    if listing.energy_rating and listing.energy_rating.upper() in ("F", "G", "H"):
+        flag_badges.append(f"ENERGY {listing.energy_rating.upper()}")
+
+    if flag_badges:
+        lines.append("")
+        lines.append(f"**Flags:** `{'` `'.join(flag_badges)}`")
+
+    # Opportunity signals
+    if opp:
+        lines.append("")
+        lines.append("**Opportunities (+):**")
+        for r in opp:
+            lines.append(f"- {r}")
+
+    # Red flags
+    if flags:
+        lines.append("")
+        lines.append("**Red Flags (!):**")
+        for r in flags:
+            lines.append(f"- {r}")
+
+    # Description snippet
+    desc = (listing.description or "")[:300]
+    if desc:
+        lines.append("")
+        lines.append(f"**Description:** {desc}...")
+
+    return "\n".join(lines)
+
+
+def build_test_md(title, request_block, all_listings, results, platforms_ok, platforms_fail, max_deals=5):
+    """Build full test markdown."""
+    md = [
+        f"# {title}",
+        f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "## Request",
+        "```",
+        request_block,
+        "```",
+        "",
+        "## Search Metadata",
+        f"- **Platforms OK**: {', '.join(platforms_ok) or 'none'}",
+        f"- **Platforms failed**: {', '.join(platforms_fail) or 'none'}",
+        f"- **Total listings scraped**: {len(all_listings)}",
+        f"- **Deals scored**: {len(results)}",
+        "",
+        "## Results",
+        "",
+    ]
+
+    if results:
+        for i, (listing, analysis) in enumerate(results[:max_deals], 1):
+            md.append(format_deal_md(listing, analysis, i))
+            md.append("")
+            md.append("---")
+            md.append("")
+    else:
+        md.append("*No deals found matching criteria.*")
+
+    return "\n".join(md)
+
+
+def test_1():
+    """Budget apartment near DESY/Altona <300k."""
+    print("Test 1: Budget apartment Altona <300k...")
+    criteria = UserCriteria(
+        budget_max=300000, min_rooms=2, min_size_sqm=30,
+        property_types=["apartment"], districts=["Altona"],
+        equity_pct=20, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="moderate",
+    )
+    listings, results, ok, fail = run_search(criteria)
+    return build_test_md(
+        "Test 1: Budget Apartment near DESY (Altona, <300k)",
+        "budget_max: 300,000 | min_rooms: 2 | districts: [Altona]\n"
+        "property_type: apartment | risk: moderate | equity: 20%",
+        listings, results, ok, fail,
     )
 
-    return job, deals
+
+def test_2():
+    """All Hamburg apartments <250k, aggressive scoring."""
+    print("Test 2: Cheapest Hamburg apartments <250k aggressive...")
+    criteria = UserCriteria(
+        budget_max=250000, min_rooms=1, min_size_sqm=25,
+        property_types=["apartment"],
+        equity_pct=15, interest_rate_pct=4.0, loan_term_years=25,
+        risk_tolerance="aggressive",
+    )
+    listings, results, ok, fail = run_search(criteria)
+    return build_test_md(
+        "Test 2: Cheapest Hamburg Apartments (<250k, Aggressive)",
+        "budget_max: 250,000 | min_rooms: 1 | districts: all\n"
+        "property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%",
+        listings, results, ok, fail,
+    )
 
 
-async def test_1_budget_apartment():
-    """Test 1: Budget apartment search - under 250k, 2+ rooms, Harburg/Bergedorf."""
-    print("\n=== TEST 1: Budget Apartment (Harburg/Bergedorf, <250k, 2+ rooms) ===")
-
-    async with app_lifespan(None) as lc:
-        criteria = UserCriteria(
-            budget_min=50000, budget_max=250000, min_size_sqm=30, min_rooms=2,
-            property_types=["apartment"], districts=["Harburg", "Bergedorf"],
-        )
-        job, deals = await run_search_and_wait(
-            lc["job_store"], lc["scorer"], criteria,
-            max_results=5, risk_tolerance="conservative",
-        )
-
-        md = [
-            "# Test 1: Budget Apartment Search",
-            f"**Date**: {datetime.now().isoformat()[:19]}",
-            "",
-            "## Request",
-            "```",
-            "Tool: start_search + get_search_results",
-            "budget_max: 250,000 EUR",
-            "budget_min: 50,000 EUR",
-            "min_rooms: 2",
-            "min_size_sqm: 30",
-            "property_type: apartment",
-            "districts: [Harburg, Bergedorf]",
-            "risk_tolerance: conservative",
-            "```",
-            "",
-            "## Search Metadata",
-            f"- **Platforms searched**: {', '.join(job.platforms_done)}",
-            f"- **Platforms failed**: {', '.join(f'{p} ({e})' for p, e in job.platforms_failed) or 'none'}",
-            f"- **Total listings found**: {len(job.listings)}",
-            f"- **Duration**: {job.duration_seconds:.0f}s",
-            f"- **Deals scored**: {len(deals)}",
-            "",
-            "## Results",
-        ]
-        if deals:
-            for i, d in enumerate(deals, 1):
-                md.append(format_deal(d, i))
-                md.append("")
-        else:
-            md.append("*No deals found matching criteria.*")
-
-        return "\n".join(md), job, deals
+def test_3():
+    """MFH / Mehrfamilienhaus <1.5M."""
+    print("Test 3: Mehrfamilienhaus <1.5M...")
+    criteria = UserCriteria(
+        budget_min=300000, budget_max=1500000, min_rooms=2, min_size_sqm=80,
+        property_types=["multi_family"],
+        equity_pct=30, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="aggressive",
+    )
+    listings, results, ok, fail = run_search(criteria, max_pages=3)
+    return build_test_md(
+        "Test 3: Mehrfamilienhaus Investment (<1.5M)",
+        "budget: 300k-1.5M | min_size: 80m² | property_type: multi_family\n"
+        "risk: aggressive | equity: 30%",
+        listings, results, ok, fail,
+    )
 
 
-async def test_2_premium_eimsbuettel():
-    """Test 2: Premium apartment in Eimsbüttel under 500k."""
-    print("\n=== TEST 2: Premium Eimsbüttel Apartment (<500k, 3+ rooms) ===")
+def test_4():
+    """Market data + investment estimates (no scraping)."""
+    print("Test 4: Market data overview...")
+    market = HamburgMarketData()
+    from src.analyzer.metrics import MetricsCalculator
+    calc = MetricsCalculator(market)
 
-    async with app_lifespan(None) as lc:
-        criteria = UserCriteria(
-            budget_min=200000, budget_max=500000, min_size_sqm=50, min_rooms=3,
-            property_types=["apartment"], districts=["Eimsbüttel"],
-        )
-        job, deals = await run_search_and_wait(
-            lc["job_store"], lc["scorer"], criteria,
-            max_results=5, equity_pct=25, interest_rate_pct=3.5,
-            risk_tolerance="moderate",
-        )
+    md = [
+        "# Test 4: Market Data & Investment Estimates",
+        f"**Date**: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "## Request",
+        "```",
+        "Tool: get_market_data(districts=None)  # all Hamburg",
+        "Tool: estimate_investment(200k, 60m², per district)",
+        "```",
+        "",
+        "## Hamburg Districts Overview",
+        "",
+        "| District | Avg Price/m² | Avg Rent/m² | Yield | Trend |",
+        "|----------|:-----------:|:-----------:|:-----:|:-----:|",
+    ]
 
-        md = [
-            "# Test 2: Premium Eimsbüttel Apartment",
-            f"**Date**: {datetime.now().isoformat()[:19]}",
-            "",
-            "## Request",
-            "```",
-            "Tool: start_search + get_search_results",
-            "budget_max: 500,000 EUR",
-            "budget_min: 200,000 EUR",
-            "min_rooms: 3",
-            "min_size_sqm: 50",
-            "property_type: apartment",
-            "districts: [Eimsbüttel]",
-            "equity_pct: 25%",
-            "risk_tolerance: moderate",
-            "```",
-            "",
-            "## Search Metadata",
-            f"- **Platforms searched**: {', '.join(job.platforms_done)}",
-            f"- **Platforms failed**: {', '.join(f'{p} ({e})' for p, e in job.platforms_failed) or 'none'}",
-            f"- **Total listings found**: {len(job.listings)}",
-            f"- **Duration**: {job.duration_seconds:.0f}s",
-            f"- **Deals scored**: {len(deals)}",
-            "",
-            "## Results",
-        ]
-        if deals:
-            for i, d in enumerate(deals, 1):
-                md.append(format_deal(d, i))
-                md.append("")
-        else:
-            md.append("*No deals found matching criteria.*")
-
-        return "\n".join(md), job, deals
-
-
-async def test_3_mfh_investment():
-    """Test 3: Mehrfamilienhaus under 1.5M."""
-    print("\n=== TEST 3: Mehrfamilienhaus (<1.5M) ===")
-
-    async with app_lifespan(None) as lc:
-        criteria = UserCriteria(
-            budget_min=300000, budget_max=1500000, min_size_sqm=80, min_rooms=2,
-            property_types=["multi_family"],
-        )
-        job, deals = await run_search_and_wait(
-            lc["job_store"], lc["scorer"], criteria,
-            max_results=5, equity_pct=30, interest_rate_pct=3.5,
-            risk_tolerance="aggressive",
+    for name in market.districts:
+        data = market.get_district_data(name)
+        md.append(
+            f"| {name} | EUR {data['avg_price_sqm_buy']:,.0f} | "
+            f"EUR {data['avg_rent_sqm_month']:.2f} | "
+            f"{data['avg_gross_yield_pct']:.1f}% | {data.get('trend', '?')} |"
         )
 
-        md = [
-            "# Test 3: Mehrfamilienhaus Investment",
-            f"**Date**: {datetime.now().isoformat()[:19]}",
-            "",
-            "## Request",
-            "```",
-            "Tool: start_search + get_search_results",
-            "budget_max: 1,500,000 EUR",
-            "budget_min: 300,000 EUR",
-            "min_rooms: 2",
-            "min_size_sqm: 80",
-            "property_type: multi_family",
-            "districts: all Hamburg",
-            "equity_pct: 30%",
-            "risk_tolerance: aggressive",
-            "```",
-            "",
-            "## Search Metadata",
-            f"- **Platforms searched**: {', '.join(job.platforms_done)}",
-            f"- **Platforms failed**: {', '.join(f'{p} ({e})' for p, e in job.platforms_failed) or 'none'}",
-            f"- **Total listings found**: {len(job.listings)}",
-            f"- **Duration**: {job.duration_seconds:.0f}s",
-            f"- **Deals scored**: {len(deals)}",
-            "",
-            "## Results",
-        ]
-        if deals:
-            for i, d in enumerate(deals, 1):
-                md.append(format_deal(d, i))
-                md.append("")
-        else:
-            md.append("*No MFH deals found matching criteria.*")
+    md.extend([
+        "",
+        f"**Purchase costs**: {market.total_purchase_costs_pct:.2f}% "
+        f"({', '.join(f'{k}: {v}%' for k, v in market.purchase_costs_breakdown.items())})",
+        "",
+        "## Investment Estimate: EUR 200k apartment (60m²) per district",
+        "",
+        "| District | Rent/mo | Mortgage/mo | Cashflow/mo | Yield | vs Market |",
+        "|----------|:-------:|:-----------:|:-----------:|:-----:|:---------:|",
+    ])
 
-        return "\n".join(md), job, deals
-
-
-async def test_4_market_data():
-    """Test 4: Market data overview + investment estimates for each district."""
-    print("\n=== TEST 4: Market Data & Investment Estimates ===")
-
-    async with app_lifespan(None) as lc:
-        market = lc["market_data"]
-        scorer = lc["scorer"]
-
-        md = [
-            "# Test 4: Market Data & Investment Estimates",
-            f"**Date**: {datetime.now().isoformat()[:19]}",
-            "",
-            "## Request 1: get_market_data()",
-            "```",
-            "Tool: get_market_data",
-            "districts: null (all Hamburg)",
-            "```",
-            "",
-            "## All Districts Overview",
-            "",
-            "| District | Avg Price/m² | Avg Rent/m² | Yield | Trend |",
-            "|----------|-------------|-------------|-------|-------|",
-        ]
-
-        for name in market.districts:
-            data = market.get_district_data(name)
-            md.append(
-                f"| {name} | EUR {data['avg_price_sqm_buy']:,.0f} | "
-                f"EUR {data['avg_rent_sqm_month']:.2f} | "
-                f"{data['avg_gross_yield_pct']:.1f}% | {data.get('trend', 'stable')} |"
-            )
-
-        md.extend([
-            "",
-            f"**Total purchase costs**: {market.total_purchase_costs_pct:.2f}%",
-            "",
-            "## Request 2: estimate_investment (200k apartment per district)",
-            "```",
-            "Tool: estimate_investment",
-            "purchase_price: 200,000 EUR",
-            "size_sqm: 60",
-            "equity_pct: 20%",
-            "interest_rate: 3.5%",
-            "loan_term: 25 years",
-            "```",
-            "",
-            "| District | Est Rent/mo | Mortgage/mo | Cashflow/mo | Gross Yield | vs Market |",
-            "|----------|-----------|------------|------------|-------------|-----------|",
-        ])
-
-        from src.analyzer.metrics import MetricsCalculator
-        from src.database.models import Listing, UserCriteria as UC
-        calc = MetricsCalculator(market)
-
-        for name in market.districts:
-            listing = Listing(id='est', platform='estimate', url='', title='',
-                             price=200000, size_sqm=60, rooms=2, district=name)
-            criteria = UC(equity_pct=20, interest_rate_pct=3.5, loan_term_years=25)
-            r = calc.calculate(listing, criteria)
-            md.append(
-                f"| {name} | EUR {r.estimated_rent_monthly:,.0f} | "
-                f"EUR {r.mortgage_monthly:,.0f} | "
-                f"EUR {r.monthly_cashflow:+,.0f} | "
-                f"{r.gross_rental_yield_pct:.1f}% | "
-                f"{r.price_vs_market_pct:+.0f}% |"
-            )
-
-        return "\n".join(md), None, None
-
-
-async def test_5_aggressive_renovation():
-    """Test 5: Aggressive search for renovation bargains under 200k."""
-    print("\n=== TEST 5: Aggressive Renovation Deals (<200k, all Hamburg) ===")
-
-    async with app_lifespan(None) as lc:
-        criteria = UserCriteria(
-            budget_min=50000, budget_max=200000, min_size_sqm=25, min_rooms=1,
-            property_types=["apartment"],
-        )
-        job, deals = await run_search_and_wait(
-            lc["job_store"], lc["scorer"], criteria,
-            max_results=5, equity_pct=15, interest_rate_pct=4.0,
-            risk_tolerance="aggressive",
+    for name in market.districts:
+        listing = Listing(id="est", platform="est", url="", title="",
+                         price=200000, size_sqm=60, rooms=2, district=name)
+        c = UserCriteria(equity_pct=20, interest_rate_pct=3.5, loan_term_years=25)
+        r = calc.calculate(listing, c)
+        md.append(
+            f"| {name} | EUR {r.estimated_rent_monthly:,.0f} | "
+            f"EUR {r.mortgage_monthly:,.0f} | "
+            f"EUR {r.monthly_cashflow:+,.0f} | "
+            f"{r.gross_rental_yield_pct:.1f}% | "
+            f"{r.price_vs_market_pct:+.0f}% |"
         )
 
-        # Also run analyze_listing on top deal if available
-        analysis_md = ""
-        if deals:
-            top = deals[0]
-            # Run analysis
-            from src.database.models import Listing, UserCriteria as UC
-            # Find the listing object
-            for l in job.listings:
-                if l.id == top.listing_id:
-                    criteria_a = UC(equity_pct=15, interest_rate_pct=4.0, loan_term_years=25)
-                    analysis, score = lc["scorer"].score_listing(l, criteria_a)
-
-                    from mcp_server.models.outputs import DealAnalysis as DA
-                    features = []
-                    if l.balcony: features.append("balcony")
-                    if l.garden: features.append("garden")
-                    if l.parking: features.append("parking")
-
-                    da = DA(
-                        listing=top,
-                        total_purchase_cost=analysis.total_purchase_cost,
-                        equity_required=analysis.equity_required,
-                        mortgage_monthly=analysis.mortgage_monthly,
-                        estimated_rent_monthly=analysis.estimated_rent_monthly,
-                        net_yield_pct=analysis.net_rental_yield_pct,
-                        cap_rate_pct=analysis.cap_rate_pct,
-                        cash_on_cash_return_pct=analysis.cash_on_cash_return_pct,
-                        district_avg_price_sqm=analysis.district_avg_price_sqm,
-                        year_built=l.year_built,
-                        condition=l.condition,
-                        description=l.description[:500] if l.description else None,
-                        property_type=l.property_type,
-                        features=features,
-                    )
-                    analysis_md = (
-                        "\n## Deep Analysis: Top Deal (analyze_listing)\n"
-                        "```\n"
-                        f"Tool: analyze_listing\n"
-                        f"listing_id: {top.listing_id}\n"
-                        f"equity_pct: 15%\n"
-                        f"interest_rate_pct: 4.0%\n"
-                        "```\n\n" +
-                        format_analysis(da)
-                    )
-                    break
-
-        md = [
-            "# Test 5: Aggressive Renovation Deals",
-            f"**Date**: {datetime.now().isoformat()[:19]}",
-            "",
-            "## Request",
-            "```",
-            "Tool: start_search + get_search_results",
-            "budget_max: 200,000 EUR",
-            "budget_min: 50,000 EUR",
-            "min_rooms: 1",
-            "min_size_sqm: 25",
-            "property_type: apartment",
-            "districts: all Hamburg",
-            "equity_pct: 15%",
-            "interest_rate: 4.0%",
-            "risk_tolerance: aggressive",
-            "```",
-            "",
-            "## Search Metadata",
-            f"- **Platforms searched**: {', '.join(job.platforms_done)}",
-            f"- **Platforms failed**: {', '.join(f'{p} ({e})' for p, e in job.platforms_failed) or 'none'}",
-            f"- **Total listings found**: {len(job.listings)}",
-            f"- **Duration**: {job.duration_seconds:.0f}s",
-            f"- **Deals scored**: {len(deals)}",
-            "",
-            "## Results",
-        ]
-        if deals:
-            for i, d in enumerate(deals, 1):
-                md.append(format_deal(d, i))
-                md.append("")
-        else:
-            md.append("*No deals found matching criteria.*")
-
-        if analysis_md:
-            md.append(analysis_md)
-
-        return "\n".join(md), job, deals
+    return "\n".join(md)
 
 
-async def main():
+def test_5():
+    """Premium 3+ room Eimsbüttel/Hamburg-Nord <500k, conservative."""
+    print("Test 5: Premium Eimsbüttel/Nord <500k conservative...")
+    criteria = UserCriteria(
+        budget_min=200000, budget_max=500000, min_rooms=3, min_size_sqm=60,
+        property_types=["apartment"], districts=["Eimsbüttel", "Hamburg-Nord"],
+        equity_pct=25, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="conservative",
+    )
+    listings, results, ok, fail = run_search(criteria)
+    return build_test_md(
+        "Test 5: Premium Apartment (Eimsbüttel/Nord, 3+ rooms, <500k)",
+        "budget: 200k-500k | min_rooms: 3 | min_size: 60m²\n"
+        "districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%",
+        listings, results, ok, fail,
+    )
+
+
+def main():
+    import logging
+    logging.basicConfig(level=logging.WARNING)
+
     results_dir = Path("tests/mcp_results")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     tests = [
-        ("test_1_budget_apartment.md", test_1_budget_apartment),
-        ("test_2_premium_eimsbuettel.md", test_2_premium_eimsbuettel),
-        ("test_3_mfh_investment.md", test_3_mfh_investment),
-        ("test_4_market_data.md", test_4_market_data),
-        ("test_5_aggressive_renovation.md", test_5_aggressive_renovation),
+        ("test_1_altona_budget.md", test_1),
+        ("test_2_cheapest_aggressive.md", test_2),
+        ("test_3_mfh_investment.md", test_3),
+        ("test_4_market_data.md", test_4),
+        ("test_5_premium_conservative.md", test_5),
     ]
 
     for filename, test_fn in tests:
         try:
-            md_content, job, deals = await test_fn()
-            filepath = results_dir / filename
-            filepath.write_text(md_content)
-            deal_count = len(deals) if deals else "N/A"
-            print(f"  Saved: {filepath} ({deal_count} deals)")
+            md = test_fn()
+            path = results_dir / filename
+            path.write_text(md)
+            print(f"  -> Saved: {path}")
         except Exception as e:
-            print(f"  ERROR in {filename}: {e}")
+            print(f"  -> ERROR: {e}")
             import traceback
             traceback.print_exc()
 
-    print("\n=== All tests complete ===")
+    print("\nAll tests complete.")
 
 
 if __name__ == "__main__":
-    import logging
-    logging.basicConfig(level=logging.WARNING)
-    asyncio.run(main())
+    main()
