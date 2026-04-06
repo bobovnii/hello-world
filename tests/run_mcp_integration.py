@@ -343,19 +343,20 @@ def test_7():
 
 
 def test_8():
-    """Multi-family houses in all Hamburg <1.5M."""
-    print("Test 8: Multi-family houses all Hamburg <1.5M...")
+    """Multi-family houses near DESY (Altona + Eimsbüttel) <1.5M."""
+    print("Test 8: Multi-family houses near DESY <1.5M...")
     criteria = UserCriteria(
         budget_min=200000, budget_max=1500000, min_rooms=2, min_size_sqm=80,
-        property_types=["multi_family"],
+        property_types=["multi_family"], districts=DESY_DISTRICTS,
         equity_pct=25, interest_rate_pct=3.5, loan_term_years=25,
         risk_tolerance="moderate",
     )
     listings, results, ok, fail = run_search(criteria, max_pages=5)
     return build_test_md(
-        "Test 8: Multi-Family Houses Hamburg (<1.5M)",
+        "Test 8: Multi-Family Houses near DESY (<1.5M)",
         "budget: 200k-1.5M | min_size: 80m² | property_type: multi_family\n"
-        "districts: all Hamburg | risk: moderate | equity: 25%",
+        "districts: [Altona, Eimsbüttel]  (DESY nearby)\n"
+        "risk: moderate | equity: 25%",
         listings, results, ok, fail,
     )
     import logging
