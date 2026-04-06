@@ -300,7 +300,64 @@ def test_5():
     )
 
 
-def main():
+DESY_DISTRICTS = ["Altona", "Eimsbüttel"]  # Bahrenfeld + nearby
+
+
+def test_6():
+    """2-room apartments near DESY (Altona + Eimsbüttel) <250k."""
+    print("Test 6: 2-room apartments near DESY <250k...")
+    criteria = UserCriteria(
+        budget_max=250000, min_rooms=2, min_size_sqm=30,
+        property_types=["apartment"], districts=DESY_DISTRICTS,
+        equity_pct=20, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="moderate",
+    )
+    listings, results, ok, fail = run_search(criteria, max_pages=3)
+    return build_test_md(
+        "Test 6: 2-Room Apartments near DESY (<250k)",
+        "budget_max: 250,000 | min_rooms: 2 | min_size: 30m²\n"
+        "districts: [Altona, Eimsbüttel]  (DESY nearby: Bahrenfeld, Othmarschen,\n"
+        "  Lurup, Stellingen, Eidelstedt, Lokstedt, Schnelsen, Ottensen)\n"
+        "property_type: apartment | risk: moderate | equity: 20%",
+        listings, results, ok, fail,
+    )
+
+
+def test_7():
+    """3-room apartments near DESY (Altona + Eimsbüttel) <300k."""
+    print("Test 7: 3-room apartments near DESY <300k...")
+    criteria = UserCriteria(
+        budget_max=300000, min_rooms=3, min_size_sqm=50,
+        property_types=["apartment"], districts=DESY_DISTRICTS,
+        equity_pct=20, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="moderate",
+    )
+    listings, results, ok, fail = run_search(criteria, max_pages=3)
+    return build_test_md(
+        "Test 7: 3-Room Apartments near DESY (<300k)",
+        "budget_max: 300,000 | min_rooms: 3 | min_size: 50m²\n"
+        "districts: [Altona, Eimsbüttel]  (DESY nearby)\n"
+        "property_type: apartment | risk: moderate | equity: 20%",
+        listings, results, ok, fail,
+    )
+
+
+def test_8():
+    """Multi-family houses in all Hamburg <1.5M."""
+    print("Test 8: Multi-family houses all Hamburg <1.5M...")
+    criteria = UserCriteria(
+        budget_min=200000, budget_max=1500000, min_rooms=2, min_size_sqm=80,
+        property_types=["multi_family"],
+        equity_pct=25, interest_rate_pct=3.5, loan_term_years=25,
+        risk_tolerance="moderate",
+    )
+    listings, results, ok, fail = run_search(criteria, max_pages=5)
+    return build_test_md(
+        "Test 8: Multi-Family Houses Hamburg (<1.5M)",
+        "budget: 200k-1.5M | min_size: 80m² | property_type: multi_family\n"
+        "districts: all Hamburg | risk: moderate | equity: 25%",
+        listings, results, ok, fail,
+    )
     import logging
     logging.basicConfig(level=logging.WARNING)
 
@@ -313,6 +370,9 @@ def main():
         ("test_3_mfh_investment.md", test_3),
         ("test_4_market_data.md", test_4),
         ("test_5_premium_conservative.md", test_5),
+        ("test_6_desy_2room_250k.md", test_6),
+        ("test_7_desy_3room_300k.md", test_7),
+        ("test_8_mfh_all_hamburg.md", test_8),
     ]
 
     for filename, test_fn in tests:
