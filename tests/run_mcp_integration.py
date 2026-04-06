@@ -78,8 +78,14 @@ def format_deal_md(listing: Listing, analysis: AnalysisResult, idx: int) -> str:
         lines.append(f"| **Condition** | {listing.condition} |")
     if listing.energy_rating:
         lines.append(f"| **Energy rating** | {listing.energy_rating} |")
-    if listing.hausgeld:
-        lines.append(f"| **Hausgeld** | EUR {listing.hausgeld:,.0f}/mo |")
+    # Always show Hausgeld and Erbbaurecht status
+    lines.append(f"| **Hausgeld** | {'EUR '+str(int(listing.hausgeld))+'/mo' if listing.hausgeld else 'unknown'} |")
+    lines.append(f"| **Erbbaurecht** | {'YES - leasehold land!' if listing.is_erbbaurecht else 'No / unknown'} |")
+    if listing.is_rented:
+        rent_str = f"YES - EUR {listing.current_rent_monthly:,.0f}/mo" if listing.current_rent_monthly else "YES (amount unknown)"
+        lines.append(f"| **Tenanted** | {rent_str} |")
+    if listing.is_wbs:
+        lines.append(f"| **WBS/Social housing** | YES - rent capped |")
 
     # Financial metrics
     lines.append("")

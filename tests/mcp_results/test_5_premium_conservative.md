@@ -1,5 +1,5 @@
 # Test 5: Premium Apartment (Eimsbüttel/Nord, 3+ rooms, <500k)
-**Date**: 2026-04-06 20:20
+**Date**: 2026-04-06 21:31
 
 ## Request
 ```
@@ -8,14 +8,47 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 ```
 
 ## Search Metadata
-- **Platforms OK**: immoscout (12), immowelt (0), ohne-makler (1), kleinanzeigen (4)
+- **Platforms OK**: immoscout (13), immowelt (0), ohne-makler (1), kleinanzeigen (4)
 - **Platforms failed**: none
-- **Total listings scraped**: 17
-- **Deals scored**: 17
+- **Total listings scraped**: 18
+- **Deals scored**: 18
 
 ## Results
 
-### Deal #1 — Score: 52/100
+### Deal #1 — Score: 58/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | vermietete 3 Zimmer EG-Wohnung in schöner Lage von Schnelsen |
+| **URL** | https://www.immobilienscout24.de/expose/160209791 |
+| **Platform** | immoscout |
+| **Price** | EUR 359,000 |
+| **Size** | 99 m² |
+| **Rooms** | 3.0 |
+| **District** | Eimsbüttel |
+| **Address** | 22457 Hamburg, Schnelsen (unvollständige Adresse) |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
+| **Tenanted** | YES (amount unknown) |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,626 (district avg: EUR 6,200) = **-42%**
+- Gross Yield: 4.96%
+- Monthly Cashflow: EUR -356
+
+**Flags:** `TENANTED`
+
+**Opportunities (+):**
+- [+] Price 42% below district average (€3626/m² vs €6200/m²)
+- [+] Rental yield 5.0% (+2.1% above district avg 2.9%)
+- [+] Price below implied value (€359,000 vs est. €594,000)
+
+**Red Flags (!):**
+- [!] TENANTED (vermietet) - typically 20-30% discount vs vacant. Check: Hamburg 10-year Kündigungssperrfrist, rent level vs Mietspiegel
+
+---
+
+### Deal #2 — Score: 52/100
 
 | Field | Value |
 |-------|-------|
@@ -28,6 +61,8 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 | **District** | Eimsbüttel |
 | **Address** | 22455 Hamburg, Niendorf (unvollständige Adresse) |
 | **Energy rating** | E |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 4,100 (district avg: EUR 6,200) = **-34%**
@@ -41,7 +76,7 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 
 ---
 
-### Deal #2 — Score: 49/100
+### Deal #3 — Score: 49/100
 
 | Field | Value |
 |-------|-------|
@@ -53,6 +88,8 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 | **Rooms** | 3.0 |
 | **District** | Eimsbüttel |
 | **Address** | 22455 Hamburg, Niendorf (unvollständige Adresse) |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 4,474 (district avg: EUR 6,200) = **-28%**
@@ -66,7 +103,7 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 
 ---
 
-### Deal #3 — Score: 48/100
+### Deal #4 — Score: 48/100
 
 | Field | Value |
 |-------|-------|
@@ -79,6 +116,8 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 | **District** | Eimsbüttel |
 | **Address** | 22459 Hamburg, Schnelsen (unvollständige Adresse) |
 | **Energy rating** | E |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 4,579 (district avg: EUR 6,200) = **-26%**
@@ -92,7 +131,7 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 
 ---
 
-### Deal #4 — Score: 46/100
+### Deal #5 — Score: 46/100
 
 | Field | Value |
 |-------|-------|
@@ -105,6 +144,8 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 | **District** | Hamburg-Nord |
 | **Address** | 22395 Hamburg, Poppenbüttel (unvollständige Adresse) |
 | **Energy rating** | F |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 3,750 (district avg: EUR 5,000) = **-25%**
@@ -121,30 +162,5 @@ districts: [Eimsbüttel, Hamburg-Nord] | risk: conservative | equity: 25%
 
 **Red Flags (!):**
 - [!] POOR ENERGY RATING (F) - EU requires class E by 2030, class D by 2033. Mandatory insulation/heating upgrades on ownership change (2-year deadline). Budget 20,000-60,000€ for energy renovation
-
----
-
-### Deal #5 — Score: 42/100
-
-| Field | Value |
-|-------|-------|
-| **Title** | Schöne Aussichten! |
-| **URL** | https://www.immobilienscout24.de/expose/162908362 |
-| **Platform** | immoscout |
-| **Price** | EUR 330,000 |
-| **Size** | 67 m² |
-| **Rooms** | 3.0 |
-| **District** | Eimsbüttel |
-| **Address** | 22529 Hamburg, Lokstedt (unvollständige Adresse) |
-| **Energy rating** | C |
-
-**Financial Metrics:**
-- Price/m²: EUR 4,925 (district avg: EUR 6,200) = **-21%**
-- Gross Yield: 3.65%
-- Monthly Cashflow: EUR -676
-
-**Opportunities (+):**
-- [+] Price 21% below district average (€4925/m² vs €6200/m²)
-- [+] Price below implied value (€330,000 vs est. €402,000)
 
 ---

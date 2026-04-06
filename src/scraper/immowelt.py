@@ -80,7 +80,12 @@ class ImmoweltScraper(BaseScraper):
                     if "multi_family" in criteria.property_types:
                         if listing.property_type != "multi_family":
                             continue
-                        if listing.size_sqm < 100 and listing.rooms < 5:
+                        text = f"{(listing.title or '').lower()} {(listing.description or '').lower()}"
+                        has_mfh_keyword = any(kw in text for kw in (
+                            "mehrfamilienhaus", "zinshaus", "wohneinheiten",
+                            "miethaus", "apartmenthaus", "zweifamilienhaus",
+                        ))
+                        if not has_mfh_keyword and listing.size_sqm < 120:
                             continue
                     seen_urls.add(listing.url)
                     all_listings.append(listing)

@@ -207,28 +207,54 @@ class OhneMaklerScraper(BaseScraper):
         if "hausgeld mtl." in details:
             listing.hausgeld = clean_price(details["hausgeld mtl."])
 
-        # Property type
+        # Property type (from structured Objektart/Objekttyp fields only)
         objektart = details.get("objektart", "").lower()
         objekttyp = details.get("objekttyp", "").lower()
         combined = f"{objektart} {objekttyp}"
-        if "mehrfamilienhaus" in combined or "zinshaus" in combined or "anlage" in combined:
+        if "mehrfamilienhaus" in combined or "zinshaus" in combined:
             listing.property_type = "multi_family"
         elif "wohnung" in combined:
             listing.property_type = "apartment"
         elif any(w in combined for w in ("haus", "bungalow", "villa", "reihenhaus", "doppelhaushälfte")):
             listing.property_type = "house"
 
-        # Also check description for MFH keywords
+        # Erbbaurecht from structured fields
+        nutzung = details.get("aktuelle nutzung", "").lower()
+        if "erbbau" in nutzung or "erbpacht" in nutzung:
+            listing.is_erbbaurecht = True
+        # Also check all fields for Erbbaurecht mentions
+        for val in details.values():
+            if "erbbau" in val.lower() or "erbpacht" in val.lower():
+                listing.is_erbbaurecht = True
+                break
+
+        # Rented status from structured fields
+        if nutzung and any(kw in nutzung for kw in ("vermietet", "mieter")):
+            listing.is_rented = True
+
+        # Try to extract actual rent from details
+        for key in ("aktuelle miete", "mieteinnahmen", "kaltmiete", "ist-miete"):
+            if key in details:
+                rent = clean_price(details[key])
+                if rent and 50 < rent < 50000:
+                    listing.current_rent_monthly = rent
+                    listing.is_rented = True
+                    break
+
+        # Get description
         desc_el = soup.select_one(".prose")
         if desc_el:
             desc_text = desc_el.get_text(strip=True)[:2000]
             listing.description = desc_text
-            mfh_keywords = [
-                "mehrfamilienhaus", "zinshaus", "renditeobjekt", "kapitalanlage",
-                "wohneinheiten", "mieteinnahmen", "apartmenthaus", "mietshaus",
-            ]
-            if any(kw in desc_text.lower() for kw in mfh_keywords):
-                listing.property_type = "multi_family"
+            # Only override property_type from description if Objektart didn't set it
+            # (structured data is more reliable than keyword matching)
+            if listing.property_type not in ("apartment", "house"):
+                mfh_keywords = [
+                    "mehrfamilienhaus", "zinshaus", "wohneinheiten",
+                    "apartmenthaus", "mietshaus",
+                ]
+                if any(kw in desc_text.lower() for kw in mfh_keywords):
+                    listing.property_type = "multi_family"
 
         # Features
         ausstattung = details.get("ausstattung", "").lower()

@@ -88,8 +88,19 @@ class BaseScraper(ABC):
                         if "multi_family" in criteria.property_types:
                             if listing.property_type != "multi_family":
                                 continue
-                            # A single small apartment is not an MFH
-                            if listing.size_sqm < 100 and listing.rooms < 5:
+                            # A single apartment or small house is not an MFH
+                            # MFH must have: explicit MFH property_type AND either
+                            # large size (>120m²) or many rooms (>5) or explicit MFH keywords in title
+                            title_lower = (listing.title or "").lower()
+                            desc_lower = (listing.description or "").lower()
+                            text = f"{title_lower} {desc_lower}"
+                            has_mfh_keyword = any(kw in text for kw in (
+                                "mehrfamilienhaus", "zinshaus", "wohneinheiten",
+                                "miethaus", "apartmenthaus", "wohnanlage",
+                                "zwei wohneinheiten", "zwei einheiten",
+                                "zweifamilienhaus", "dreifamilienhaus",
+                            ))
+                            if not has_mfh_keyword and listing.size_sqm < 120:
                                 continue
                         all_listings.append(listing)
                         self.logger.info(

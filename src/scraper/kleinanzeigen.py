@@ -128,12 +128,12 @@ class KleinanzeigenScraper(BaseScraper):
         desc_el = soup.select_one("#viewad-description-text")
         description = desc_el.get_text(strip=True)[:2000] if desc_el else None
 
-        # Detect MFH from title/description keywords
+        # Detect MFH from title/description keywords (strict - no "Kapitalanlage")
         combined_text = f"{title} {description or ''}".lower()
         mfh_keywords = [
-            "mehrfamilienhaus", "mehrfamilien", "zinshaus", "renditeobjekt",
-            "anlageimmobilie", "wohnanlage", "apartmenthaus", "mietshaus",
-            "kapitalanlage", "wohneinheiten", "mieteinnahmen", "mietobjekt",
+            "mehrfamilienhaus", "mehrfamilien", "zinshaus",
+            "wohnanlage", "apartmenthaus", "mietshaus",
+            "wohneinheiten", "mietobjekt",
         ]
         if any(kw in combined_text for kw in mfh_keywords):
             details["property_type"] = "multi_family"

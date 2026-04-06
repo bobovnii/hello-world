@@ -1,5 +1,5 @@
 # Test 2: Cheapest Hamburg Apartments (<250k, Aggressive)
-**Date**: 2026-04-06 20:17
+**Date**: 2026-04-06 21:29
 
 ## Request
 ```
@@ -8,10 +8,10 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 ```
 
 ## Search Metadata
-- **Platforms OK**: immoscout (27), immowelt (4), ohne-makler (3), kleinanzeigen (2)
+- **Platforms OK**: immoscout (27), immowelt (4), ohne-makler (3), kleinanzeigen (1)
 - **Platforms failed**: none
-- **Total listings scraped**: 36
-- **Deals scored**: 36
+- **Total listings scraped**: 35
+- **Deals scored**: 35
 
 ## Results
 
@@ -28,6 +28,8 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 | **District** | Hamburg-Nord |
 | **Address** | 22395 Hamburg / Bergstedt, Bergstedt (unvollständige Adresse) |
 | **Energy rating** | G |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 3,129 (district avg: EUR 5,000) = **-37%**
@@ -61,6 +63,9 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 | **District** | Wandsbek |
 | **Address** | 22145 Hamburg, Rahlstedt (unvollständige Adresse) |
 | **Energy rating** | D |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
+| **Tenanted** | YES (amount unknown) |
 
 **Financial Metrics:**
 - Price/m²: EUR 2,821 (district avg: EUR 4,200) = **-33%**
@@ -92,6 +97,8 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 | **Rooms** | 2.0 |
 | **District** | Hamburg-Mitte |
 | **Address** | Nedderndorfer Weg xxx, 22111 Hamburg, Horn |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 3,052 (district avg: EUR 5,500) = **-44%**
@@ -118,6 +125,8 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 | **District** | Altona |
 | **Address** | 22589 Hamburg / Iserbrook, Iserbrook (unvollständige Adresse) |
 | **Energy rating** | D |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | YES - leasehold land! |
 
 **Financial Metrics:**
 - Price/m²: EUR 2,905 (district avg: EUR 5,800) = **-50%**
@@ -150,6 +159,8 @@ property_type: apartment | risk: aggressive | equity: 15% | rate: 4.0%
 | **District** | Hamburg-Mitte |
 | **Address** | 22119 Hamburg, Billstedt (unvollständige Adresse) |
 | **Energy rating** | C |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
 
 **Financial Metrics:**
 - Price/m²: EUR 3,307 (district avg: EUR 5,500) = **-40%**
