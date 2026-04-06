@@ -36,7 +36,7 @@ class ImmoweltScraper(BaseScraper):
         params = []
         if criteria.budget_min > 0:
             params.append(f"pmin={int(criteria.budget_min)}")
-        if criteria.budget_max < 1_000_000:
+        if criteria.budget_max < 50_000_000:
             params.append(f"pmax={int(criteria.budget_max)}")
         if criteria.min_size_sqm > 0:
             params.append(f"amin={int(criteria.min_size_sqm)}")
@@ -76,9 +76,12 @@ class ImmoweltScraper(BaseScraper):
 
             for listing in listings:
                 if listing.url not in seen_urls and self._matches_criteria(listing, criteria):
-                    # For multi-family search, only include MFH listings
-                    if "multi_family" in criteria.property_types and listing.property_type != "multi_family":
-                        continue
+                    # For multi-family search, validate MFH
+                    if "multi_family" in criteria.property_types:
+                        if listing.property_type != "multi_family":
+                            continue
+                        if listing.size_sqm < 100 and listing.rooms < 5:
+                            continue
                     seen_urls.add(listing.url)
                     all_listings.append(listing)
                     self.logger.info(

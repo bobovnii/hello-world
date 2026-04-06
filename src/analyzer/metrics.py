@@ -36,8 +36,15 @@ class MetricsCalculator:
             loan_amount, criteria.interest_rate_pct, criteria.loan_term_years
         )
 
-        # Rental income
-        estimated_rent = self.market.estimate_monthly_rent(district, listing.size_sqm)
+        # Rental income - zero for uninhabitable properties
+        is_uninhabitable = (
+            listing.is_ausbau_needed
+            or (listing.condition and listing.condition.lower() in ("rohbau", "shell"))
+        )
+        if is_uninhabitable:
+            estimated_rent = 0.0
+        else:
+            estimated_rent = self.market.estimate_monthly_rent(district, listing.size_sqm)
 
         # Annual figures
         annual_rent = estimated_rent * 12

@@ -72,7 +72,36 @@ class DealScorer:
             + location_score * weights["location_trend"]
         )
 
-        analysis.deal_score = round(min(100, max(0, total)), 1)
+        # Apply red flag penalties (reduce score for each major risk factor)
+        red_flags = [r for r in reasons if r.startswith("[!]")]
+        penalty = 0
+        for flag in red_flags:
+            flag_lower = flag.lower()
+            if "erbbaurecht" in flag_lower:
+                penalty += 12  # Major: don't own land
+            elif "ausbau" in flag_lower or "rohbau" in flag_lower:
+                penalty += 15  # Major: uninhabitable
+            elif "energy rating" in flag_lower:
+                penalty += 8   # Mandatory renovation by 2030
+            elif "tenanted" in flag_lower or "vermietet" in flag_lower:
+                penalty += 5   # Moderate: limits use, but has income
+            elif "wbs" in flag_lower or "sozialbindung" in flag_lower:
+                penalty += 10  # Rent capped
+            elif "sonderumlage" in flag_lower:
+                penalty += 7
+            elif "renovation" in flag_lower or "sanierung" in flag_lower:
+                penalty += 6
+            elif "built" in flag_lower and "no renovation" in flag_lower:
+                penalty += 5
+            elif "souterrain" in flag_lower:
+                penalty += 8
+            elif "attic" in flag_lower or "dachgeschoss" in flag_lower:
+                penalty += 4
+            else:
+                penalty += 3  # Generic minor flag
+
+        total = max(0, total - penalty)
+        analysis.deal_score = round(min(100, total), 1)
         return analysis, analysis.deal_score
 
     def score_and_rank(
@@ -129,12 +158,12 @@ class DealScorer:
         return 40 + (cf / 500) * 60  # 40-100 for 0-500
 
     def _score_undervalue(self, reasons: list[str]) -> float:
-        """Score based on number and quality of undervalue signals."""
-        if not reasons:
+        """Score based on number of OPPORTUNITY signals only (not red flags)."""
+        opportunities = [r for r in reasons if r.startswith("[+]")]
+        if not opportunities:
             return 10  # Small base score
-        # Each reason adds points, capped at 100
         score_per_reason = 20
-        return min(100, 10 + len(reasons) * score_per_reason)
+        return min(100, 10 + len(opportunities) * score_per_reason)
 
     def _score_location(self, district: str) -> float:
         """Score based on district trend and desirability."""

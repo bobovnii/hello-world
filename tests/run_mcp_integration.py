@@ -165,18 +165,18 @@ def build_test_md(title, request_block, all_listings, results, platforms_ok, pla
 
 
 def test_1():
-    """Budget apartment near DESY/Altona <300k."""
-    print("Test 1: Budget apartment Altona <300k...")
+    """Budget apartment near DESY/Altona+Eimsbüttel <400k."""
+    print("Test 1: Budget apartment Altona/Eimsbüttel <400k...")
     criteria = UserCriteria(
-        budget_max=300000, min_rooms=2, min_size_sqm=30,
-        property_types=["apartment"], districts=["Altona"],
+        budget_max=400000, min_rooms=2, min_size_sqm=30,
+        property_types=["apartment"], districts=["Altona", "Eimsbüttel"],
         equity_pct=20, interest_rate_pct=3.5, loan_term_years=25,
         risk_tolerance="moderate",
     )
     listings, results, ok, fail = run_search(criteria)
     return build_test_md(
-        "Test 1: Budget Apartment near DESY (Altona, <300k)",
-        "budget_max: 300,000 | min_rooms: 2 | districts: [Altona]\n"
+        "Test 1: Budget Apartment near DESY (Altona + Eimsbüttel, <400k)",
+        "budget_max: 400,000 | min_rooms: 2 | districts: [Altona, Eimsbüttel]\n"
         "property_type: apartment | risk: moderate | equity: 20%",
         listings, results, ok, fail,
     )

@@ -165,11 +165,30 @@ class ImmoScoutScraper(BaseScraper):
         address = addr_data.get("line", "")
         zip_code = addr_data.get("postcode", "")
 
-        # Filter: must be Hamburg area
-        if address and "hamburg" not in address.lower() and zip_code:
-            zip_prefix = zip_code[:2]
-            if zip_prefix not in ("20", "21", "22"):
+        # Filter: must be Hamburg area (not surrounding cities)
+        addr_lower = address.lower()
+        if "hamburg" not in addr_lower:
+            # Surrounding cities that share zip prefixes with Hamburg
+            non_hamburg = [
+                "norderstedt", "seevetal", "reinbek", "pinneberg",
+                "ahrensburg", "schenefeld", "wedel", "glinde",
+                "barsbüttel", "oststeinbek", "halstenbek", "rellingen",
+                "tangstedt", "henstedt", "quickborn", "elmshorn",
+                "geesthacht", "lauenburg", "wentorf", "aumühle",
+                "börnsen", "escheburg", "stelle", "winsen",
+            ]
+            if any(city in addr_lower for city in non_hamburg):
                 return None
+            # Also check zip code is valid Hamburg range
+            if zip_code:
+                try:
+                    z = int(zip_code)
+                    # Hamburg PLZ: 20038-22769 + 21029-21149 (Bergedorf/Harburg)
+                    is_hamburg = (20038 <= z <= 22769) or (21029 <= z <= 21149)
+                    if not is_hamburg:
+                        return None
+                except ValueError:
+                    pass
 
         # Energy rating
         energy = item.get("energyEfficiencyClass")
@@ -180,12 +199,11 @@ class ImmoScoutScraper(BaseScraper):
         if "house" in re_type:
             property_type = "house"
 
-        # MFH detection from title
+        # MFH detection from title - strict keywords only
         title_lower = title.lower()
         mfh_keywords = [
-            "mehrfamilienhaus", "zinshaus", "renditeobjekt",
-            "kapitalanlage", "miethaus", "wohnanlage",
-            "apartmenthaus", "wohneinheiten", "anlageimmobilie",
+            "mehrfamilienhaus", "zinshaus", "miethaus", "wohnanlage",
+            "apartmenthaus", "wohneinheiten",
         ]
         if any(kw in title_lower for kw in mfh_keywords):
             property_type = "multi_family"
@@ -202,9 +220,10 @@ class ImmoScoutScraper(BaseScraper):
         # Enriched fields from title (IS24 mobile API only gives title + attributes)
         title_lower = title.lower()
         is_erbbaurecht = any(kw in title_lower for kw in ("erbbaurecht", "erbpacht", "erbbau"))
+        # Rented detection - require explicit keywords, not just "Kapitalanlage"
         is_rented = any(kw in title_lower for kw in (
-            "vermietet", "kapitalanlage", "mieteinnahmen", "rendite",
-            "anlageobjekt", "anlageimmobilie",
+            "vermietet", "mieteinnahmen", "aktuelle miete",
+            "mieter vorhanden", "vermietet an",
         ))
         is_dachgeschoss = any(kw in title_lower for kw in ("dachgeschoss", "dachschräge", "mansarde"))
         is_ausbau = any(kw in title_lower for kw in ("ausbaureserve", "ausbaufähig", "ausbau", "entwicklungspotenzial"))

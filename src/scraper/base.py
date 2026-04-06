@@ -84,9 +84,13 @@ class BaseScraper(ABC):
                 if detail_html:
                     listing = self.parse_listing_detail(detail_html, detail_url)
                     if listing and self._matches_criteria(listing, criteria):
-                        # For multi-family search, only include MFH listings
-                        if "multi_family" in criteria.property_types and listing.property_type != "multi_family":
-                            continue
+                        # For multi-family search, validate MFH classification
+                        if "multi_family" in criteria.property_types:
+                            if listing.property_type != "multi_family":
+                                continue
+                            # A single small apartment is not an MFH
+                            if listing.size_sqm < 100 and listing.rooms < 5:
+                                continue
                         all_listings.append(listing)
                         self.logger.info(
                             f"  Found: {listing.title[:50]} - "
@@ -111,6 +115,10 @@ class BaseScraper(ABC):
         is_mfh = "multi_family" in criteria.property_types or listing.property_type == "multi_family"
         if not is_mfh and listing.rooms < criteria.min_rooms * 0.9:
             return False
+        # District filter
+        if criteria.districts and listing.district:
+            if listing.district not in criteria.districts:
+                return False
         return True
 
     def close(self):

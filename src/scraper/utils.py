@@ -143,28 +143,99 @@ def fetch_page(url: str, session: requests.Session | None = None, timeout: int =
 
 def detect_district(address: str, zip_code: str = "") -> str:
     """Map an address or zip code to a Hamburg district (Bezirk)."""
+    # Complete Hamburg zip-to-district mapping (all Hamburg PLZ)
     zip_to_district = {
-        "20095": "Hamburg-Mitte", "20097": "Hamburg-Mitte", "20099": "Hamburg-Mitte",
-        "20144": "Eimsbüttel", "20146": "Eimsbüttel", "20249": "Eimsbüttel",
-        "20251": "Eimsbüttel", "20253": "Eimsbüttel", "20255": "Eimsbüttel",
-        "20257": "Eimsbüttel", "20259": "Eimsbüttel",
-        "20357": "Eimsbüttel", "20359": "Hamburg-Mitte",
-        "20457": "Hamburg-Mitte", "20459": "Hamburg-Mitte",
+        # Hamburg-Mitte
+        "20038": "Hamburg-Mitte", "20095": "Hamburg-Mitte", "20097": "Hamburg-Mitte",
+        "20099": "Hamburg-Mitte",
+        "20148": "Hamburg-Mitte",  # Rotherbaum (shared with Eimsbüttel)
+        "20354": "Hamburg-Mitte", "20355": "Hamburg-Mitte",
+        "20359": "Hamburg-Mitte",  # St. Pauli
+        "20457": "Hamburg-Mitte", "20459": "Hamburg-Mitte",  # HafenCity
+        "20535": "Hamburg-Mitte", "20537": "Hamburg-Mitte", "20539": "Hamburg-Mitte",  # Hamm/Rothenburgsort
+        "21107": "Hamburg-Mitte", "21109": "Hamburg-Mitte",  # Wilhelmsburg/Veddel
+        "22111": "Hamburg-Mitte", "22113": "Hamburg-Mitte",  # Billstedt/Horn
+        "22115": "Hamburg-Mitte", "22117": "Hamburg-Mitte", "22119": "Hamburg-Mitte",  # Billstedt/Öjendorf
+        # Altona
+        "22523": "Altona",  # Eidelstedt (Bezirk Eimsbüttel, but sometimes Altona)
+        "22525": "Altona",  # Stellingen
+        "22527": "Altona",  # Stellingen
+        "22547": "Altona",  # Lurup
+        "22549": "Altona",  # Lurup
+        "22559": "Altona",  # Rissen
+        "22587": "Altona",  # Blankenese
+        "22589": "Altona",  # Iserbrook
+        "22605": "Altona",  # Othmarschen
+        "22607": "Altona",  # Bahrenfeld/Groß Flottbek
+        "22609": "Altona",  # Osdorf
+        "22761": "Altona",  # Bahrenfeld
+        "22763": "Altona",  # Ottensen
+        "22765": "Altona",  # Ottensen/Altona-Altstadt
+        "22767": "Altona",  # Altona-Altstadt
+        "22769": "Altona",  # Altona-Nord/Sternschanze
+        # Eimsbüttel
+        "20144": "Eimsbüttel", "20146": "Eimsbüttel",
+        "20249": "Eimsbüttel", "20251": "Eimsbüttel", "20253": "Eimsbüttel",
+        "20255": "Eimsbüttel", "20257": "Eimsbüttel", "20259": "Eimsbüttel",
+        "20357": "Eimsbüttel",
+        "22453": "Eimsbüttel",  # Niendorf
+        "22455": "Eimsbüttel",  # Niendorf
+        "22457": "Eimsbüttel",  # Schnelsen
+        "22459": "Eimsbüttel",  # Niendorf
+        "22523": "Eimsbüttel",  # Eidelstedt
+        "22525": "Eimsbüttel",  # Stellingen (overlap)
+        "22527": "Eimsbüttel",  # Stellingen
+        "22529": "Eimsbüttel",  # Lokstedt
+        # Hamburg-Nord
+        "22083": "Hamburg-Nord", "22085": "Hamburg-Nord",  # Uhlenhorst/Barmbek-Süd
+        "22087": "Hamburg-Nord",  # Hohenfelde
+        "22089": "Hamburg-Nord",  # Eilbek (Bezirk Wandsbek, but Nord border)
+        "20249": "Hamburg-Nord",  # Eppendorf (shared)
+        "22177": "Hamburg-Nord",  # Bramfeld-Nord
+        "22297": "Hamburg-Nord",  # Alsterdorf/Winterhude
+        "22299": "Hamburg-Nord",  # Winterhude
+        "22301": "Hamburg-Nord",  # Barmbek-Nord
+        "22303": "Hamburg-Nord",  # Winterhude
+        "22305": "Hamburg-Nord",  # Barmbek-Nord
+        "22307": "Hamburg-Nord",  # Barmbek-Nord
+        "22309": "Hamburg-Nord",  # Steilshoop
+        "22335": "Hamburg-Nord",  # Fuhlsbüttel
+        "22337": "Hamburg-Nord",  # Ohlsdorf
+        "22339": "Hamburg-Nord",  # Hummelsbüttel
+        "22391": "Hamburg-Nord",  # Wellingsbüttel
+        "22393": "Hamburg-Nord",  # Sasel (Bezirk Wandsbek, but usually counted Nord)
+        "22395": "Hamburg-Nord",  # Bergstedt
+        "22397": "Hamburg-Nord",  # Duvenstedt
+        "22399": "Hamburg-Nord",  # Poppenbüttel
+        "22413": "Hamburg-Nord",  # Langenhorn
+        "22415": "Hamburg-Nord",  # Langenhorn
+        "22417": "Hamburg-Nord",  # Langenhorn
+        "22419": "Hamburg-Nord",  # Langenhorn
+        # Wandsbek
+        "22041": "Wandsbek",  # Wandsbek-Kern
+        "22043": "Wandsbek",  # Tonndorf
+        "22045": "Wandsbek",  # Tonndorf/Jenfeld
+        "22047": "Wandsbek",  # Wandsbek/Tonndorf
+        "22049": "Wandsbek",  # Dulsberg/Wandsbek
+        "22081": "Wandsbek",  # Barmbek-Süd (Bezirk Wandsbek side)
+        "22143": "Wandsbek",  # Rahlstedt
+        "22145": "Wandsbek",  # Meiendorf
+        "22147": "Wandsbek",  # Rahlstedt
+        "22149": "Wandsbek",  # Rahlstedt
+        "22159": "Wandsbek",  # Farmsen-Berne
+        "22175": "Wandsbek",  # Bramfeld
+        "22177": "Wandsbek",  # Bramfeld (overlap with Nord)
+        "22179": "Wandsbek",  # Bramfeld
+        "22359": "Wandsbek",  # Volksdorf
+        "22391": "Wandsbek",  # Wellingsbüttel (overlap)
+        "22393": "Wandsbek",  # Sasel (overlap)
+        # Bergedorf
         "21029": "Bergedorf", "21031": "Bergedorf", "21033": "Bergedorf",
         "21035": "Bergedorf", "21037": "Bergedorf", "21039": "Bergedorf",
+        # Harburg
         "21071": "Harburg", "21073": "Harburg", "21075": "Harburg",
-        "21077": "Harburg", "21079": "Harburg", "21107": "Hamburg-Mitte",
-        "21109": "Hamburg-Mitte", "21149": "Harburg",
-        "22041": "Wandsbek", "22043": "Wandsbek", "22045": "Wandsbek",
-        "22047": "Wandsbek", "22049": "Wandsbek", "22081": "Wandsbek",
-        "22083": "Hamburg-Nord", "22085": "Hamburg-Nord", "22087": "Hamburg-Nord",
-        "22089": "Hamburg-Nord",
-        "22143": "Wandsbek", "22145": "Wandsbek", "22147": "Wandsbek",
-        "22149": "Wandsbek", "22159": "Wandsbek",
-        "22297": "Hamburg-Nord", "22299": "Hamburg-Nord",
-        "22301": "Hamburg-Nord", "22303": "Hamburg-Nord",
-        "22305": "Hamburg-Nord", "22307": "Hamburg-Nord", "22309": "Hamburg-Nord",
-        "22761": "Altona", "22765": "Altona", "22767": "Altona", "22769": "Altona",
+        "21077": "Harburg", "21079": "Harburg",
+        "21149": "Harburg",  # Neugraben-Fischbek
     }
 
     # Try zip code first

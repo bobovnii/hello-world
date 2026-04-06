@@ -1,5 +1,5 @@
 # Test 3: Mehrfamilienhaus Investment (<1.5M)
-**Date**: 2026-04-05 08:12
+**Date**: 2026-04-06 20:18
 
 ## Request
 ```
@@ -15,7 +15,43 @@ risk: aggressive | equity: 30%
 
 ## Results
 
-### Deal #1 — Score: 65/100
+### Deal #1 — Score: 68/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Kernsanierte 3-Zimmer Wohnung mit Balkon in ruhiger Lage von Hamburg- Lurup |
+| **URL** | https://www.ohne-makler.net/immobilie/443366/ |
+| **Platform** | ohne-makler |
+| **Price** | EUR 324,000 |
+| **Size** | 76 m² |
+| **Rooms** | 3.0 |
+| **District** | Altona |
+| **Address** | 22547 Hamburg
+							
+								(Lurup) |
+| **Year built** | 1971 |
+| **Energy rating** | D |
+| **Hausgeld** | EUR 549/mo |
+
+**Financial Metrics:**
+- Price/m²: EUR 4,263 (district avg: EUR 5,800) = **-26%**
+- Gross Yield: 4.08%
+- Monthly Cashflow: EUR -1,011
+
+**Opportunities (+):**
+- [+] Price 26% below district average (€4263/m² vs €5800/m²)
+- [+] Rental yield 4.1% (+1.1% above district avg 3.0%)
+- [+] Below market in rising district (Altona) - appreciation potential
+- [+] Price below implied value (€324,000 vs est. €440,800)
+
+**Red Flags (!):**
+- [!] HIGH HAUSGELD: €549/mo (€7.2/m² - above typical 2.50-3.50€/m²). Eats into cashflow. Check what's included and if Sonderumlage is pending
+
+**Description:** Zum Verkauf steht eine großzügige 3-Zimmer-Wohnung mit ca. 76 m² Wohnfläche in ruhiger und grüner Lage von Hamburg (Jevenstedter Straße 55). Ein Kellerabteil gehört ebenfalls dazu.Im Zuge der Renovierung wurden bereits zahlreiche Modernisierungsmaßnahmen durchgeführt:Neue Elektrik in der gesamten Wo...
+
+---
+
+### Deal #2 — Score: 65/100
 
 | Field | Value |
 |-------|-------|
@@ -42,7 +78,7 @@ risk: aggressive | equity: 30%
 
 ---
 
-### Deal #2 — Score: 65/100
+### Deal #3 — Score: 65/100
 
 | Field | Value |
 |-------|-------|
@@ -70,73 +106,7 @@ risk: aggressive | equity: 30%
 
 ---
 
-### Deal #3 — Score: 61/100
-
-| Field | Value |
-|-------|-------|
-| **Title** | Kernsanierte 3-Zimmer Wohnung mit Balkon in ruhiger Lage von Hamburg- Lurup |
-| **URL** | https://www.ohne-makler.net/immobilie/443366/ |
-| **Platform** | ohne-makler |
-| **Price** | EUR 324,000 |
-| **Size** | 76 m² |
-| **Rooms** | 3.0 |
-| **District** | Hamburg |
-| **Address** | 22547 Hamburg
-							
-								(Lurup) |
-| **Year built** | 1971 |
-| **Energy rating** | D |
-| **Hausgeld** | EUR 549/mo |
-
-**Financial Metrics:**
-- Price/m²: EUR 4,263 (district avg: EUR 5,500) = **-22%**
-- Gross Yield: 3.94%
-- Monthly Cashflow: EUR -1,048
-
-**Opportunities (+):**
-- [+] Price 22% below district average (€4263/m² vs €5500/m²)
-- [+] Price below implied value (€324,000 vs est. €425,600)
-
-**Red Flags (!):**
-- [!] HIGH HAUSGELD: €549/mo (€7.2/m² - above typical 2.50-3.50€/m²). Eats into cashflow. Check what's included and if Sonderumlage is pending
-
-**Description:** Zum Verkauf steht eine großzügige 3-Zimmer-Wohnung mit ca. 76 m² Wohnfläche in ruhiger und grüner Lage von Hamburg (Jevenstedter Straße 55). Ein Kellerabteil gehört ebenfalls dazu.Im Zuge der Renovierung wurden bereits zahlreiche Modernisierungsmaßnahmen durchgeführt:Neue Elektrik in der gesamten Wo...
-
----
-
-### Deal #4 — Score: 53/100
-
-| Field | Value |
-|-------|-------|
-| **Title** | Großzügiges Wohnhaus mit klassischem Charme und zwei Wohneinheiten in begehrter Lage von Rahlstedt |
-| **URL** | https://www.kleinanzeigen.de/s-anzeige/grosszuegiges-wohnhaus-mit-klassischem-charme-und-zwei-wohneinheiten-in-begehrter-lage-von-rahlstedt/3319171035-208-9455 |
-| **Platform** | kleinanzeigen |
-| **Price** | EUR 1,098,000 |
-| **Size** | 293 m² |
-| **Rooms** | 8.0 |
-| **District** | Wandsbek |
-| **Address** | 22143 Wandsbek - Hamburg Rahlstedt |
-| **Year built** | 1905 |
-
-**Financial Metrics:**
-- Price/m²: EUR 3,754 (district avg: EUR 4,200) = **-11%**
-- Gross Yield: 3.68%
-- Monthly Cashflow: EUR -1,926
-
-**Flags:** `DACHGESCHOSS`
-
-**Opportunities (+):**
-- [+] Below market in rising district (Wandsbek) - appreciation potential
-- [+] Price below implied value (€1,098,000 vs est. €1,345,592)
-
-**Red Flags (!):**
-- [!] ATTIC APARTMENT (Dachgeschoss) - sloped ceilings reduce usable space. WoFlV: areas under 1m height don't count, 1-2m count 50%. Check if m² is Wohnfläche (WoFlV) or gross area (DIN 277)
-
-**Description:** # ObjektbeschreibungDieses großzügige Wohnhaus aus dem Jahr 1905 befindet sich auf einem ca. 1.029 m² großen Grundstück in begehrter Lage von Hamburg-Rahlstedt. Die Immobilie verbindet den Charme eines historisch gewachsenen Gebäudes mit einer klaren, funktionalen Raumstruktur und bietet vielseitige...
-
----
-
-### Deal #5 — Score: 51/100
+### Deal #4 — Score: 51/100
 
 | Field | Value |
 |-------|-------|
@@ -160,5 +130,31 @@ risk: aggressive | equity: 30%
 - [+] Price below implied value (€795,000 vs est. €1,010,620)
 
 **Description:** Diese beeindruckende Jugendstilvilla aus dem Jahr 1910 bietet eine seltene Gelegenheit, ein Stück Geschichte zu erwerben. Auf einem großzügigen Grundstück von ca. 894 m² gelegen, erstreckt sich die W......
+
+---
+
+### Deal #5 — Score: 46/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Gepflegtes Mittelreihenhaus mit zwei Wohneinheiten und Dachterrasse in Hamburg-Langenhorn |
+| **URL** | https://www.kleinanzeigen.de/s-anzeige/gepflegtes-mittelreihenhaus-mit-zwei-wohneinheiten-und-dachterrasse-in-hamburg-langenhorn/3344761294-208-9489 |
+| **Platform** | kleinanzeigen |
+| **Price** | EUR 620,000 |
+| **Size** | 140 m² |
+| **Rooms** | 5.0 |
+| **District** | Hamburg-Nord |
+| **Address** | 22417 Hamburg-Nord - Hamburg Langenhorn |
+| **Year built** | 1951 |
+
+**Financial Metrics:**
+- Price/m²: EUR 4,429 (district avg: EUR 5,000) = **-11%**
+- Gross Yield: 3.52%
+- Monthly Cashflow: EUR -1,164
+
+**Opportunities (+):**
+- [+] Below market in rising district (Hamburg-Nord) - appreciation potential
+
+**Description:** In begehrter und naturnaher Wohnlage von Hamburg-Langenhorn, unmittelbar angrenzend an ein idyllisches Naturschutzgebiet, präsentiert sich dieses im Jahr 2020 umfassend sanierte Mittelreihenhaus mit rückseitigem Anbau. Die Immobilie wurde in konventioneller Massivbauweise errichtet und verfügt teilw...
 
 ---
