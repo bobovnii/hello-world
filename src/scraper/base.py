@@ -122,9 +122,10 @@ class BaseScraper(ABC):
             return False
         if listing.size_sqm < criteria.min_size_sqm * 0.9:
             return False
-        # For multi-family, rooms may be absent or represent units, so skip room filter
+        # Room filter: strict minimum (no tolerance - 3 rooms means 3+)
+        # For multi-family, rooms may be absent or represent units, so skip
         is_mfh = "multi_family" in criteria.property_types or listing.property_type == "multi_family"
-        if not is_mfh and listing.rooms < criteria.min_rooms * 0.9:
+        if not is_mfh and listing.rooms > 0 and listing.rooms < criteria.min_rooms:
             return False
         # District filter
         if criteria.districts and listing.district:
