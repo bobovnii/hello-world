@@ -26,6 +26,12 @@ scraper:
       search_path: "/liste/hamburg/wohnungen/kaufen"
       needs_playwright: true
 
+    ohne_makler:
+      enabled: true
+      base_url: "https://www.ohne-makler.net"
+      search_path: "/immobilien/hamburg/hamburg/"
+      needs_playwright: false
+
 analyzer:
   scoring_weights:
     price_below_market: 0.25

@@ -8,7 +8,11 @@ from bs4 import BeautifulSoup, NavigableString
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district
+from .utils import (
+    clean_price, clean_size, clean_rooms, detect_district,
+    MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
+    DACHGESCHOSS_KEYWORDS, AUSBAU_KEYWORDS, WBS_KEYWORDS,
+)
 
 
 class KleinanzeigenScraper(BaseScraper):
@@ -130,11 +134,7 @@ class KleinanzeigenScraper(BaseScraper):
 
         # Detect MFH from title/description keywords (strict)
         combined_text = f"{title} {description or ''}".lower()
-        mfh_keywords = [
-            "mehrfamilienhaus", "mehrfamilien", "zinshaus",
-            "apartmenthaus", "mietshaus",
-        ]
-        if any(kw in combined_text for kw in mfh_keywords):
+        if any(kw in combined_text for kw in MFH_KEYWORDS):
             details["property_type"] = "multi_family"
 
         # Features from page text
@@ -147,13 +147,12 @@ class KleinanzeigenScraper(BaseScraper):
         combined = f"{title} {description or ''}".lower()
 
         # Erbbaurecht detection
-        is_erbbaurecht = any(kw in combined for kw in ("erbbaurecht", "erbpacht", "erbbau"))
+        is_erbbaurecht = any(kw in combined for kw in ERBBAURECHT_KEYWORDS)
 
         # Rented / Kapitalanlage detection
-        is_rented = any(kw in combined for kw in (
-            "vermietet", "kapitalanlage", "mieteinnahmen", "aktuelle miete",
-            "rendite", "anlageobjekt", "anlageimmobilie",
-        ))
+        is_rented = any(kw in combined for kw in RENTED_KEYWORDS)
+        if not is_rented:
+            is_rented = any(kw in combined for kw in KAPITALANLAGE_KEYWORDS)
 
         # Extract actual rent amount if mentioned
         current_rent = None
@@ -169,13 +168,13 @@ class KleinanzeigenScraper(BaseScraper):
                 current_rent = None  # Likely parsed wrong
 
         # WBS / social housing
-        is_wbs = any(kw in combined for kw in ("wbs", "wohnberechtigungsschein", "sozialbindung", "preisgebunden"))
+        is_wbs = any(kw in combined for kw in WBS_KEYWORDS)
 
         # Dachgeschoss
-        is_dachgeschoss = any(kw in combined for kw in ("dachgeschoss", "dachschräge", "spitzboden", "mansarde"))
+        is_dachgeschoss = any(kw in combined for kw in DACHGESCHOSS_KEYWORDS)
 
         # Ausbau needed
-        is_ausbau = any(kw in combined for kw in ("ausbaureserve", "ausbaufähig", "rohbau", "ausbaupotenzial", "entwicklungspotenzial"))
+        is_ausbau = any(kw in combined for kw in AUSBAU_KEYWORDS)
 
         # Number of units in building
         num_units = None

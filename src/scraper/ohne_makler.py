@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district
+from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
 class OhneMaklerScraper(BaseScraper):
@@ -249,11 +249,7 @@ class OhneMaklerScraper(BaseScraper):
             # Only override property_type from description if Objektart didn't set it
             # (structured data is more reliable than keyword matching)
             if listing.property_type not in ("apartment", "house"):
-                mfh_keywords = [
-                    "mehrfamilienhaus", "zinshaus", "wohneinheiten",
-                    "apartmenthaus", "mietshaus",
-                ]
-                if any(kw in desc_text.lower() for kw in mfh_keywords):
+                if any(kw in desc_text.lower() for kw in MFH_KEYWORDS):
                     listing.property_type = "multi_family"
 
         # Features

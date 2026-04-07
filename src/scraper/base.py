@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 import requests
 
 from src.database.models import Listing, UserCriteria
-from .utils import RateLimiter, get_headers, can_fetch, fetch_page
+from .utils import RateLimiter, get_headers, can_fetch, fetch_page, MFH_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +94,7 @@ class BaseScraper(ABC):
                             title_lower = (listing.title or "").lower()
                             desc_lower = (listing.description or "").lower()
                             text = f"{title_lower} {desc_lower}"
-                            has_mfh_keyword = any(kw in text for kw in (
-                                "mehrfamilienhaus", "zinshaus", "wohneinheiten",
-                                "miethaus", "apartmenthaus", "wohnanlage",
-                                "zwei wohneinheiten", "zwei einheiten",
-                                "zweifamilienhaus", "dreifamilienhaus",
-                            ))
+                            has_mfh_keyword = any(kw in text for kw in MFH_KEYWORDS)
                             if not has_mfh_keyword and listing.size_sqm < 120:
                                 continue
                         all_listings.append(listing)

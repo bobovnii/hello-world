@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 
 from mcp.server.fastmcp import Context
@@ -148,10 +147,9 @@ def _scrape_single_listing(url: str) -> Listing | None:
     elif "ohne-makler.net" in url:
         from src.scraper.ohne_makler import OhneMaklerScraper
         scraper = OhneMaklerScraper()
-        from src.database.models import Listing as L
         # Create a stub listing and enrich from detail page
-        stub = L(id=f"ohne-makler_{hash(url)}", platform="ohne-makler",
-                 url=url, title="", price=0, size_sqm=0, rooms=0)
+        stub = Listing(id=f"ohne-makler_{hash(url)}", platform="ohne-makler",
+                       url=url, title="", price=0, size_sqm=0, rooms=0)
         return scraper._enrich_from_detail(stub, html)
 
     return None

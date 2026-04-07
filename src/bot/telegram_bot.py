@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import logging
 import os
 from io import StringIO, BytesIO
@@ -25,6 +24,7 @@ from src.database.db import Database
 from src.scraper.immoscout import ImmoScoutScraper
 from src.scraper.kleinanzeigen import KleinanzeigenScraper
 from src.scraper.immowelt import ImmoweltScraper
+from src.scraper.ohne_makler import OhneMaklerScraper
 from src.analyzer.market_data import HamburgMarketData
 from src.analyzer.scorer import DealScorer
 
@@ -94,7 +94,7 @@ class TelegramBot:
     async def _start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "Welcome to the Hamburg Real Estate Deal Finder!\n\n"
-            "I scrape ImmoScout24, Kleinanzeigen & Immowelt to find "
+            "I scrape ImmoScout24, Kleinanzeigen, Immowelt & Ohne-Makler to find "
             "undervalued properties with good ROI potential.\n\n"
             "Commands:\n"
             "/criteria - Set your search criteria\n"
@@ -334,7 +334,7 @@ class TelegramBot:
             )
             return
 
-        await update.message.reply_text("Searching ImmoScout24, Kleinanzeigen & Immowelt...")
+        await update.message.reply_text("Searching ImmoScout24, Kleinanzeigen, Immowelt & Ohne-Makler...")
 
         # Run scrapers
         all_listings = await self._run_scrapers(criteria)
@@ -362,10 +362,11 @@ class TelegramBot:
             ImmoScoutScraper(),
             KleinanzeigenScraper(),
             ImmoweltScraper(),
+            OhneMaklerScraper(),
         ]
         all_listings = []
 
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
                 executor.submit(s.search, criteria, 3): s for s in scrapers
             }

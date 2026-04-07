@@ -141,6 +141,58 @@ def fetch_page(url: str, session: requests.Session | None = None, timeout: int =
         return None
 
 
+"""Keywords indicating a multi-family house (Mehrfamilienhaus).
+
+Shared across all scrapers and the base search filter.
+"""
+MFH_KEYWORDS = [
+    "mehrfamilienhaus", "zinshaus", "wohneinheiten",
+    "miethaus", "apartmenthaus", "wohnanlage",
+    "zwei wohneinheiten", "zwei einheiten",
+    "zweifamilienhaus", "dreifamilienhaus",
+]
+
+
+# === Canonical keyword lists for enriched field detection ===
+# Used by scrapers (immoscout, kleinanzeigen, etc.) and undervalue_detector.
+# Define once here, import everywhere.
+
+ERBBAURECHT_KEYWORDS = [
+    "erbbaurecht", "erbpacht", "erbbauzins", "erbbau",
+    "pachtgrundstück", "leasehold",
+]
+
+RENTED_KEYWORDS = [
+    "vermietet", "mieteinnahmen", "aktuelle miete",
+    "mieter vorhanden", "vermietet an", "mietvertrag",
+]
+
+# Note: "kapitalanlage", "rendite", "anlageobjekt" are NOT included here
+# because they indicate *purpose*, not that the property is actually rented.
+# Scrapers that want a broader match can check these separately.
+
+KAPITALANLAGE_KEYWORDS = [
+    "kapitalanlage", "rendite", "anlageobjekt", "anlageimmobilie",
+]
+
+WBS_KEYWORDS = [
+    "wbs", "wohnberechtigungsschein", "sozialbindung",
+    "belegungsrecht", "sozialwohnung", "mietpreisbindung",
+    "preisgebunden", "gefördert",
+]
+
+DACHGESCHOSS_KEYWORDS = [
+    "dachgeschoss", "dachgeschosswohnung", "dachschräge",
+    "spitzboden", "mansarde", "unter dem dach",
+]
+
+AUSBAU_KEYWORDS = [
+    "ausbaureserve", "ausbaufähig", "ausbau ", "rohbau",
+    "nicht ausgebaut", "auszubauen", "ausbaupotenzial",
+    "entwicklungspotenzial", "ausbaumöglichkeit",
+]
+
+
 def detect_district(address: str, zip_code: str = "") -> str:
     """Map an address or zip code to a Hamburg district (Bezirk)."""
     # Complete Hamburg zip-to-district mapping (all Hamburg PLZ)

@@ -35,6 +35,7 @@ async def app_lifespan(server) -> AsyncIterator[dict]:
     job_store = JobStore(cache_ttl_minutes=30)
 
     # Create tables on startup using a temporary connection
+    # Schema must match src/database/db.py exactly
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS listings (
@@ -61,7 +62,17 @@ async def app_lifespan(server) -> AsyncIterator[dict]:
                 listing_date TEXT,
                 description TEXT,
                 scraped_at TEXT NOT NULL,
-                image_urls TEXT DEFAULT '[]'
+                image_urls TEXT DEFAULT '[]',
+                is_erbbaurecht INTEGER DEFAULT 0,
+                is_rented INTEGER DEFAULT 0,
+                current_rent_monthly REAL,
+                is_wbs INTEGER DEFAULT 0,
+                sonderumlage REAL,
+                num_units_in_building INTEGER,
+                is_dachgeschoss INTEGER DEFAULT 0,
+                is_ausbau_needed INTEGER DEFAULT 0,
+                total_floors INTEGER,
+                plot_size_sqm REAL
             );
             CREATE TABLE IF NOT EXISTS analysis_results (
                 listing_id TEXT PRIMARY KEY,
@@ -76,6 +87,7 @@ async def app_lifespan(server) -> AsyncIterator[dict]:
                 FOREIGN KEY (listing_id) REFERENCES listings(id)
             );
             CREATE INDEX IF NOT EXISTS idx_listings_district ON listings(district);
+            CREATE INDEX IF NOT EXISTS idx_listings_price ON listings(price);
             CREATE INDEX IF NOT EXISTS idx_analysis_score ON analysis_results(deal_score DESC);
         """)
 

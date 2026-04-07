@@ -9,17 +9,17 @@ Based on the approach used by flathunter (github.com/flathunters/flathunter).
 
 from __future__ import annotations
 
-import re
-import logging
 from urllib.parse import urlencode
 
 import requests
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district
-
-logger = logging.getLogger(__name__)
+from .utils import (
+    clean_price, clean_size, clean_rooms, detect_district,
+    MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS,
+    DACHGESCHOSS_KEYWORDS, AUSBAU_KEYWORDS, WBS_KEYWORDS,
+)
 
 # Hamburg center coordinates (Rathaus)
 HAMBURG_LAT = 53.5511
@@ -201,11 +201,7 @@ class ImmoScoutScraper(BaseScraper):
 
         # MFH detection from title - strict keywords only
         title_lower = title.lower()
-        mfh_keywords = [
-            "mehrfamilienhaus", "zinshaus", "miethaus", "wohnanlage",
-            "apartmenthaus", "wohneinheiten",
-        ]
-        if any(kw in title_lower for kw in mfh_keywords):
+        if any(kw in title_lower for kw in MFH_KEYWORDS):
             property_type = "multi_family"
 
         district = detect_district(address, zip_code)
@@ -218,16 +214,11 @@ class ImmoScoutScraper(BaseScraper):
         url = f"{self.BASE_URL}/expose/{eid}"
 
         # Enriched fields from title (IS24 mobile API only gives title + attributes)
-        title_lower = title.lower()
-        is_erbbaurecht = any(kw in title_lower for kw in ("erbbaurecht", "erbpacht", "erbbau"))
-        # Rented detection - require explicit keywords, not just "Kapitalanlage"
-        is_rented = any(kw in title_lower for kw in (
-            "vermietet", "mieteinnahmen", "aktuelle miete",
-            "mieter vorhanden", "vermietet an",
-        ))
-        is_dachgeschoss = any(kw in title_lower for kw in ("dachgeschoss", "dachschräge", "mansarde"))
-        is_ausbau = any(kw in title_lower for kw in ("ausbaureserve", "ausbaufähig", "ausbau", "entwicklungspotenzial"))
-        is_wbs = any(kw in title_lower for kw in ("wbs", "wohnberechtigungsschein", "sozialbindung"))
+        is_erbbaurecht = any(kw in title_lower for kw in ERBBAURECHT_KEYWORDS)
+        is_rented = any(kw in title_lower for kw in RENTED_KEYWORDS)
+        is_dachgeschoss = any(kw in title_lower for kw in DACHGESCHOSS_KEYWORDS)
+        is_ausbau = any(kw in title_lower for kw in AUSBAU_KEYWORDS)
+        is_wbs = any(kw in title_lower for kw in WBS_KEYWORDS)
 
         # Private seller flag
         is_private = item.get("isPrivate", False)

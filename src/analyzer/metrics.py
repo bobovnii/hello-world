@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from src.database.models import Listing, UserCriteria, AnalysisResult
 from .market_data import HamburgMarketData
 

@@ -8,11 +8,18 @@ from src.scraper.utils import (
     clean_rooms,
     detect_district,
     RateLimiter,
+    ERBBAURECHT_KEYWORDS,
+    RENTED_KEYWORDS,
+    WBS_KEYWORDS,
+    DACHGESCHOSS_KEYWORDS,
+    AUSBAU_KEYWORDS,
+    MFH_KEYWORDS,
 )
-from src.database.models import UserCriteria
+from src.database.models import UserCriteria, Listing
 from src.scraper.immoscout import ImmoScoutScraper
 from src.scraper.kleinanzeigen import KleinanzeigenScraper
 from src.scraper.immowelt import ImmoweltScraper
+from src.scraper.ohne_makler import OhneMaklerScraper
 
 
 class TestCleanPrice:
@@ -108,6 +115,13 @@ class TestSearchURLBuilding:
         assert "immowelt.de" in url
         assert "hamburg" in url
 
+    def test_ohne_makler_url(self):
+        scraper = OhneMaklerScraper()
+        criteria = UserCriteria(budget_max=300000)
+        url = scraper.build_search_url(criteria)
+        assert "ohne-makler.net" in url
+        assert "hamburg" in url
+
     def test_pagination(self):
         scraper = ImmoScoutScraper()
         criteria = UserCriteria()
@@ -115,3 +129,70 @@ class TestSearchURLBuilding:
         url_p2 = scraper.build_search_url(criteria, page=2)
         assert "pagenumber=1" in url_p1
         assert "pagenumber=2" in url_p2
+
+
+class TestKeywordLists:
+    """Verify canonical keyword lists are properly defined and non-empty."""
+
+    def test_mfh_keywords(self):
+        assert len(MFH_KEYWORDS) > 0
+        assert "mehrfamilienhaus" in MFH_KEYWORDS
+
+    def test_erbbaurecht_keywords(self):
+        assert len(ERBBAURECHT_KEYWORDS) > 0
+        assert "erbbaurecht" in ERBBAURECHT_KEYWORDS
+
+    def test_rented_keywords(self):
+        assert len(RENTED_KEYWORDS) > 0
+        assert "vermietet" in RENTED_KEYWORDS
+
+    def test_wbs_keywords(self):
+        assert len(WBS_KEYWORDS) > 0
+        assert "wbs" in WBS_KEYWORDS
+
+    def test_dachgeschoss_keywords(self):
+        assert len(DACHGESCHOSS_KEYWORDS) > 0
+        assert "dachgeschoss" in DACHGESCHOSS_KEYWORDS
+
+    def test_ausbau_keywords(self):
+        assert len(AUSBAU_KEYWORDS) > 0
+        assert "ausbaureserve" in AUSBAU_KEYWORDS
+
+
+class TestEnrichedFieldDetection:
+    """Test that enriched fields are detected correctly from text."""
+
+    def test_erbbaurecht_detection(self):
+        text = "schöne wohnung im erbbaurecht"
+        assert any(kw in text for kw in ERBBAURECHT_KEYWORDS)
+
+    def test_rented_detection(self):
+        text = "aktuell vermietet an langjährigen mieter"
+        assert any(kw in text for kw in RENTED_KEYWORDS)
+
+    def test_wbs_detection(self):
+        text = "wohnung mit wbs erforderlich"
+        assert any(kw in text for kw in WBS_KEYWORDS)
+
+    def test_dachgeschoss_detection(self):
+        text = "gemütliche dachgeschosswohnung"
+        assert any(kw in text for kw in DACHGESCHOSS_KEYWORDS)
+
+    def test_ausbau_detection(self):
+        text = "mit großer ausbaureserve im dach"
+        assert any(kw in text for kw in AUSBAU_KEYWORDS)
+
+    def test_room_filter_strict_minimum(self):
+        """Room filter should be strict: min_rooms=3 excludes 2-room listings."""
+        from src.scraper.base import BaseScraper
+        criteria = UserCriteria(budget_min=0, budget_max=500000, min_rooms=3, min_size_sqm=0)
+        listing_2rooms = Listing(
+            id="t1", platform="test", url="", title="Test",
+            price=200000, size_sqm=60, rooms=2,
+        )
+        listing_3rooms = Listing(
+            id="t2", platform="test", url="", title="Test",
+            price=200000, size_sqm=60, rooms=3,
+        )
+        assert not BaseScraper._matches_criteria(listing_2rooms, criteria)
+        assert BaseScraper._matches_criteria(listing_3rooms, criteria)

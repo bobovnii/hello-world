@@ -13,6 +13,11 @@ import re
 from datetime import datetime
 
 from src.database.models import Listing, AnalysisResult
+from src.scraper.utils import (
+    ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
+    WBS_KEYWORDS, DACHGESCHOSS_KEYWORDS as ATTIC_KEYWORDS,
+    AUSBAU_KEYWORDS,
+)
 from .market_data import HamburgMarketData
 
 
@@ -39,22 +44,13 @@ FORECLOSURE_KEYWORDS = [
 ]
 
 # === RED FLAG KEYWORDS (why it's cheap) ===
+# ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
+# WBS_KEYWORDS, ATTIC_KEYWORDS, AUSBAU_KEYWORDS are imported from
+# src.scraper.utils (canonical definitions).
 
-ERBBAURECHT_KEYWORDS = [
-    "erbbaurecht", "erbpacht", "erbbauzins", "erbbau",
-    "pachtgrundstück", "leasehold",
-]
-
-RENTED_KEYWORDS = [
-    "vermietet", "kapitalanlage", "mieteinnahmen", "miete ",
-    "rendite", "aktuelle miete", "mieter", "mietvertrag",
-    "zur kapitalanlage", "anlageimmobilie", "anlageobjekt",
-]
-
-WBS_KEYWORDS = [
-    "wbs", "wohnberechtigungsschein", "sozialbindung",
-    "belegungsrecht", "sozialwohnung", "mietpreisbindung",
-    "preisgebunden", "gefördert",
+# Broader rented keywords for undervalue detection (includes Kapitalanlage signals)
+RENTED_KEYWORDS_BROAD = RENTED_KEYWORDS + KAPITALANLAGE_KEYWORDS + [
+    "miete ", "rendite", "mieter", "zur kapitalanlage",
 ]
 
 RENOVATION_KEYWORDS = [
@@ -62,17 +58,6 @@ RENOVATION_KEYWORDS = [
     "sanierung erforderlich", "handwerker", "fixer upper",
     "modernisierungsbedarf", "renovierungsobjekt",
     "modernisierung erforderlich", "instandsetzung",
-]
-
-ATTIC_KEYWORDS = [
-    "dachgeschoss", "dachgeschosswohnung", "dachschräge",
-    "spitzboden", "mansarde", "unter dem dach",
-]
-
-AUSBAU_KEYWORDS = [
-    "ausbaureserve", "ausbaufähig", "ausbau ", "rohbau",
-    "nicht ausgebaut", "auszubauen", "ausbaupotenzial",
-    "entwicklungspotenzial", "ausbaumöglichkeit",
 ]
 
 SONDERUMLAGE_KEYWORDS = [
@@ -196,7 +181,7 @@ class UndervalueDetector:
             )
 
         # Currently rented (vermietet)
-        if listing.is_rented or self._has_keywords(text, RENTED_KEYWORDS):
+        if listing.is_rented or self._has_keywords(text, RENTED_KEYWORDS_BROAD):
             listing.is_rented = True
             rent_info = ""
             if listing.current_rent_monthly:

@@ -8,16 +8,12 @@ directly from the search result cards.
 from __future__ import annotations
 
 import re
-import json
-import logging
 
 from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district
-
-logger = logging.getLogger(__name__)
+from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
 class ImmoweltScraper(BaseScraper):
@@ -81,10 +77,7 @@ class ImmoweltScraper(BaseScraper):
                         if listing.property_type != "multi_family":
                             continue
                         text = f"{(listing.title or '').lower()} {(listing.description or '').lower()}"
-                        has_mfh_keyword = any(kw in text for kw in (
-                            "mehrfamilienhaus", "zinshaus", "wohneinheiten",
-                            "miethaus", "apartmenthaus", "zweifamilienhaus",
-                        ))
+                        has_mfh_keyword = any(kw in text for kw in MFH_KEYWORDS)
                         if not has_mfh_keyword and listing.size_sqm < 120:
                             continue
                     seen_urls.add(listing.url)

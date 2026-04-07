@@ -12,7 +12,7 @@ class Listing:
     """A real estate listing scraped from a platform."""
 
     id: str  # platform_listingid e.g. "immoscout_12345"
-    platform: str  # immoscout | kleinanzeigen | immowelt
+    platform: str  # immoscout | kleinanzeigen | immowelt | ohne-makler
     url: str
     title: str
     price: float  # Purchase price EUR
