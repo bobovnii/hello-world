@@ -1,5 +1,5 @@
 # Test 7: 3-Room Apartments near DESY (<300k)
-**Date**: 2026-04-06 21:49
+**Date**: 2026-04-07 07:39
 
 ## Request
 ```
@@ -9,14 +9,42 @@ property_type: apartment | risk: moderate | equity: 20%
 ```
 
 ## Search Metadata
-- **Platforms OK**: immoscout (4), immowelt (0), ohne-makler (0), kleinanzeigen (2)
+- **Platforms OK**: immoscout (5), immowelt (0), ohne-makler (0), kleinanzeigen (0)
 - **Platforms failed**: none
-- **Total listings scraped**: 6
-- **Deals scored**: 6
+- **Total listings scraped**: 5
+- **Deals scored**: 5
 
 ## Results
 
-### Deal #1 — Score: 69/100
+### Deal #1 — Score: 72/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Angebotsverfahren | umfassend saniert |
+| **URL** | https://www.immobilienscout24.de/expose/166750490 |
+| **Platform** | immoscout |
+| **Price** | EUR 280,000 |
+| **Size** | 81 m² |
+| **Rooms** | 3.0 |
+| **District** | Eimsbüttel |
+| **Address** | 22455 Hamburg, Niendorf (unvollständige Adresse) |
+| **Energy rating** | E |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,457 (district avg: EUR 6,200) = **-44%**
+- Gross Yield: 5.21%
+- Monthly Cashflow: EUR -300
+
+**Opportunities (+):**
+- [+] Price 44% below district average (€3457/m² vs €6200/m²)
+- [+] Rental yield 5.2% (+2.3% above district avg 2.9%)
+- [+] Price below implied value (€280,000 vs est. €486,000)
+
+---
+
+### Deal #2 — Score: 69/100
 
 | Field | Value |
 |-------|-------|
@@ -50,7 +78,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #2 — Score: 68/100
+### Deal #3 — Score: 68/100
 
 | Field | Value |
 |-------|-------|
@@ -78,7 +106,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #3 — Score: 68/100
+### Deal #4 — Score: 68/100
 
 | Field | Value |
 |-------|-------|
@@ -113,7 +141,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #4 — Score: 64/100
+### Deal #5 — Score: 64/100
 
 | Field | Value |
 |-------|-------|
@@ -143,38 +171,5 @@ property_type: apartment | risk: moderate | equity: 20%
 
 **Red Flags (!):**
 - [!] POOR ENERGY RATING (F) - EU requires class E by 2030, class D by 2033. Mandatory insulation/heating upgrades on ownership change (2-year deadline). Budget 20,000-60,000€ for energy renovation
-
----
-
-### Deal #5 — Score: 51/100
-
-| Field | Value |
-|-------|-------|
-| **Title** | Der perfekte Start unweit vom Hagenbecks Tierpark in Hamburg-Lokstedt! |
-| **URL** | https://www.kleinanzeigen.de/s-anzeige/der-perfekte-start-unweit-vom-hagenbecks-tierpark-in-hamburg-lokstedt-/3331369281-196-9436 |
-| **Platform** | kleinanzeigen |
-| **Price** | EUR 299,000 |
-| **Size** | 65 m² |
-| **Rooms** | 2.0 |
-| **District** | Eimsbüttel |
-| **Address** | 22529 Eimsbüttel - Hamburg Lokstedt |
-| **Year built** | 1970 |
-| **Hausgeld** | EUR 382/mo |
-| **Erbbaurecht** | No / unknown |
-
-**Financial Metrics:**
-- Price/m²: EUR 4,600 (district avg: EUR 6,200) = **-26%**
-- Gross Yield: 3.91%
-- Monthly Cashflow: EUR -1,015
-
-**Opportunities (+):**
-- [+] Price 26% below district average (€4600/m² vs €6200/m²)
-- [+] Rental yield 3.9% (+1.0% above district avg 2.9%)
-- [+] Price below implied value (€299,000 vs est. €390,000)
-
-**Red Flags (!):**
-- [!] HIGH HAUSGELD: €382/mo (€5.9/m² - above typical 2.50-3.50€/m²). Eats into cashflow. Check what's included and if Sonderumlage is pending
-
-**Description:** # Objektbeschreibung- Lage: Oddernskamp in Hamburg Lokstedt- charmante 2-Zimmer-Eigentumswohnung- gut durchdachte Raumaufteilung- 1. Obergeschoss einer gepflegten Wohnanlage (Fahrstuhl)- praktische Abstellkammer- großzügiges Wohnzimmer- überdachter Südbalkon- funktionale Einbauküche- gut geschnitten...
 
 ---

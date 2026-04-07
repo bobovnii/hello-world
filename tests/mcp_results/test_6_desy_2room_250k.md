@@ -1,5 +1,5 @@
 # Test 6: 2-Room Apartments near DESY (<250k)
-**Date**: 2026-04-06 21:48
+**Date**: 2026-04-07 07:38
 
 ## Request
 ```
@@ -10,7 +10,7 @@ property_type: apartment | risk: moderate | equity: 20%
 ```
 
 ## Search Metadata
-- **Platforms OK**: immoscout (6), immowelt (0), ohne-makler (1), kleinanzeigen (1)
+- **Platforms OK**: immoscout (7), immowelt (0), ohne-makler (1), kleinanzeigen (0)
 - **Platforms failed**: none
 - **Total listings scraped**: 8
 - **Deals scored**: 8
@@ -18,6 +18,34 @@ property_type: apartment | risk: moderate | equity: 20%
 ## Results
 
 ### Deal #1 — Score: 70/100
+
+| Field | Value |
+|-------|-------|
+| **Title** | Bezugsfrei: Gepflegte 2-Zimmer-Wohnung mit Balkon in Hamburg-Stellingen |
+| **URL** | https://www.immobilienscout24.de/expose/164016168 |
+| **Platform** | immoscout |
+| **Price** | EUR 185,000 |
+| **Size** | 48 m² |
+| **Rooms** | 2.0 |
+| **District** | Eimsbüttel |
+| **Address** | 22525 Hamburg, Stellingen (unvollständige Adresse) |
+| **Energy rating** | C |
+| **Hausgeld** | unknown |
+| **Erbbaurecht** | No / unknown |
+
+**Financial Metrics:**
+- Price/m²: EUR 3,867 (district avg: EUR 6,200) = **-38%**
+- Gross Yield: 4.65%
+- Monthly Cashflow: EUR -281
+
+**Opportunities (+):**
+- [+] Price 38% below district average (€3867/m² vs €6200/m²)
+- [+] Rental yield 4.7% (+1.8% above district avg 2.9%)
+- [+] Price below implied value (€185,000 vs est. €287,040)
+
+---
+
+### Deal #2 — Score: 70/100
 
 | Field | Value |
 |-------|-------|
@@ -51,7 +79,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #2 — Score: 69/100
+### Deal #3 — Score: 69/100
 
 | Field | Value |
 |-------|-------|
@@ -79,7 +107,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #3 — Score: 69/100
+### Deal #4 — Score: 69/100
 
 | Field | Value |
 |-------|-------|
@@ -113,7 +141,7 @@ property_type: apartment | risk: moderate | equity: 20%
 
 ---
 
-### Deal #4 — Score: 62/100
+### Deal #5 — Score: 62/100
 
 | Field | Value |
 |-------|-------|
@@ -141,39 +169,5 @@ property_type: apartment | risk: moderate | equity: 20%
 
 **Red Flags (!):**
 - [!] RENOVATION NEEDED - explains lower price but potential value-add. Estimate 500-1500 €/m² renovation cost depending on scope
-
----
-
-### Deal #5 — Score: 61/100
-
-| Field | Value |
-|-------|-------|
-| **Title** | 2-Zimmer-Maisonette-Wohnung - Loggia - TG-Stellplatz - vermietet |
-| **URL** | https://www.immobilienscout24.de/expose/166087032 |
-| **Platform** | immoscout |
-| **Price** | EUR 249,000 |
-| **Size** | 58 m² |
-| **Rooms** | 2.0 |
-| **District** | Eimsbüttel |
-| **Address** | Am Ziegelteich 74, 22525 Hamburg, Stellingen |
-| **Energy rating** | D |
-| **Hausgeld** | unknown |
-| **Erbbaurecht** | No / unknown |
-| **Tenanted** | YES (amount unknown) |
-
-**Financial Metrics:**
-- Price/m²: EUR 4,293 (district avg: EUR 6,200) = **-31%**
-- Gross Yield: 4.19%
-- Monthly Cashflow: EUR -471
-
-**Flags:** `TENANTED`
-
-**Opportunities (+):**
-- [+] Price 31% below district average (€4293/m² vs €6200/m²)
-- [+] Rental yield 4.2% (+1.3% above district avg 2.9%)
-- [+] Price below implied value (€249,000 vs est. €348,000)
-
-**Red Flags (!):**
-- [!] TENANTED (vermietet) - typically 20-30% discount vs vacant. Check: Hamburg 10-year Kündigungssperrfrist, rent level vs Mietspiegel
 
 ---
