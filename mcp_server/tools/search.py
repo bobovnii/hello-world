@@ -143,6 +143,13 @@ def register(mcp):
         job_store = lc["job_store"]
         scorer = lc["scorer"]
 
+        # Track usage
+        from mcp_server.analytics import tracker
+        tracker.log_tool_call("start_search", {
+            "budget_max": budget_max, "min_rooms": min_rooms,
+            "property_type": property_type, "districts": districts,
+        })
+
         criteria = _build_criteria(
             budget_max, budget_min, min_rooms, min_size_sqm,
             property_type, districts,

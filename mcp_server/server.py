@@ -28,6 +28,31 @@ from mcp_server.context import app_lifespan
 
 mcp = FastMCP(
     "Hamburg Real Estate Deals",
+    instructions="""You are a Hamburg real estate investment analyst helping users find undervalued properties.
+
+WORKFLOW for property searches:
+1. Call get_market_data() first to understand district context
+2. Call start_search() with user criteria, then get_search_results() to retrieve ranked deals
+3. For any deal scoring above 50, call analyze_listing() for a deep dive
+4. Always present results in a comparison table
+
+RULES:
+- Always highlight red flags prominently: Erbbaurecht (leasehold), WBS (social housing), Ausbau (unfinished space), poor energy ratings
+- If a deal looks too cheap, explain WHY (the red flags ARE the explanation)
+- Never recommend a deal without mentioning unknown fields (Hausgeld=unknown, Erbbaurecht=unknown)
+- When Erbbaurecht is detected, warn that land is not owned and check lease expiry
+- Quote: prices in EUR, yields in %, cashflow in EUR/month
+- For MFH (Mehrfamilienhaus) searches, verify the property actually has multiple units
+
+DISTRICTS near DESY (Bahrenfeld): Altona + Eimsbüttel cover all nearby Stadtteile
+(Bahrenfeld, Othmarschen, Ottensen, Lurup, Stellingen, Eidelstedt, Lokstedt, Schnelsen)
+
+MARKET CONTEXT (2025):
+- Hamburg avg: 3,200 EUR/m² (Harburg) to 6,200 EUR/m² (Eimsbüttel)
+- Typical gross yield: 2.9-3.8%
+- Purchase costs: 11.07% (5.5% tax + 1.5% notary + 0.5% registry + 3.57% broker)
+- Positive cashflow is rare with 20% equity at current rates
+""",
     lifespan=app_lifespan,
     json_response=True,
 )
@@ -106,6 +131,45 @@ def investment_search(budget: str, requirements: str) -> str:
         f"5. Present a comparison and your investment recommendation\n"
         f"6. Ask if they want to adjust criteria or explore further"
     )
+
+
+@mcp.prompt(title="DESY Area Search")
+def desy_search(rooms: str = "2", budget: str = "300000") -> str:
+    """Quick search for apartments near DESY in Bahrenfeld."""
+    return (
+        f"Find {rooms}-room apartments near DESY (Hamburg-Bahrenfeld) under EUR {budget}.\n"
+        f"DESY is in Bezirk Altona. Nearby districts: Altona + Eimsbüttel.\n"
+        f"Use districts=['Altona', 'Eimsbüttel'] to cover Bahrenfeld, Ottensen, "
+        f"Stellingen, Schnelsen, Eidelstedt, Lokstedt.\n"
+        f"Present top 5 deals with red flags."
+    )
+
+
+@mcp.prompt(title="Deal Due Diligence")
+def due_diligence(listing_url: str) -> str:
+    """Full due diligence checklist for a specific property."""
+    return (
+        f"Perform full due diligence on this listing: {listing_url}\n\n"
+        f"1. Call analyze_listing() for financial analysis\n"
+        f"2. Check all red flags (Erbbaurecht, WBS, energy rating, Ausbau)\n"
+        f"3. For each red flag, explain: what it means, estimated cost impact, "
+        f"what documents to request\n"
+        f"4. Calculate the TRUE all-in cost (purchase + renovation + fees)\n"
+        f"5. Give a GO / NO-GO / INVESTIGATE FURTHER recommendation"
+    )
+
+
+# --- Usage analytics tool ---
+
+@mcp.tool()
+def get_usage_stats() -> dict:
+    """Get usage statistics for this MCP server.
+
+    Shows: total tool calls, unique sessions, daily activity,
+    most popular tools. Admin/monitoring tool.
+    """
+    from mcp_server.analytics import tracker
+    return tracker.get_stats()
 
 
 def main():
