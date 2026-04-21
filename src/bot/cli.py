@@ -6,21 +6,19 @@ import csv
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from io import StringIO
-from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt, FloatPrompt, IntPrompt, Confirm
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.markdown import Markdown
 
 from src.database.models import Listing, UserCriteria, AnalysisResult
 from src.database.db import Database
 from src.scraper.immoscout import ImmoScoutScraper
 from src.scraper.kleinanzeigen import KleinanzeigenScraper
 from src.scraper.immowelt import ImmoweltScraper
+from src.scraper.ohne_makler import OhneMaklerScraper
 from src.analyzer.market_data import HamburgMarketData
 from src.analyzer.scorer import DealScorer
 
@@ -60,8 +58,8 @@ class CLIBot:
         welcome = Panel(
             "[bold]Hamburg Real Estate Deal Finder[/bold]\n\n"
             "I'll help you find undervalued properties in Hamburg.\n"
-            "I'll scrape ImmoScout24, Kleinanzeigen & Immowelt,\n"
-            "then analyze each deal for investment potential.\n\n"
+            "I'll scrape ImmoScout24, Kleinanzeigen, Immowelt &\n"
+            "Ohne-Makler, then analyze each deal for investment potential.\n\n"
             "Let's start by setting your search criteria.",
             title="Welcome",
             border_style="blue",
@@ -167,6 +165,7 @@ class CLIBot:
             ImmoScoutScraper(),
             KleinanzeigenScraper(),
             ImmoweltScraper(),
+            OhneMaklerScraper(),
         ]
 
         all_listings: list[Listing] = []
@@ -178,7 +177,7 @@ class CLIBot:
         ) as progress:
             task = progress.add_task("Scraping platforms...", total=len(scrapers))
 
-            with ThreadPoolExecutor(max_workers=3) as executor:
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 futures = {
                     executor.submit(scraper.search, criteria, 3): scraper
                     for scraper in scrapers

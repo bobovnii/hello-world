@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 
 class HamburgMarketData:
@@ -33,8 +32,11 @@ class HamburgMarketData:
         if district in self._districts:
             return self._districts[district]
 
-        # Fuzzy match
-        district_lower = district.lower()
+        # Fuzzy match - but don't match bare "Hamburg" to "Hamburg-Mitte"
+        district_lower = district.lower().strip()
+        if district_lower in ("hamburg", ""):
+            return None  # Use city-wide average via caller
+
         for name, data in self._districts.items():
             if name.lower() in district_lower or district_lower in name.lower():
                 return data

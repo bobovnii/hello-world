@@ -3,26 +3,47 @@
 from __future__ import annotations
 
 import re
-import json
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district
+from .utils import (
+    clean_price, clean_size, clean_rooms, detect_district,
+    MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
+    DACHGESCHOSS_KEYWORDS, AUSBAU_KEYWORDS, WBS_KEYWORDS,
+)
 
 
 class KleinanzeigenScraper(BaseScraper):
     PLATFORM_NAME = "kleinanzeigen"
     BASE_URL = "https://www.kleinanzeigen.de"
 
-    def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
-        # Kleinanzeigen uses category-based URLs
-        # c208 = Wohnung kaufen, c209 = Haus kaufen
-        prop_type = criteria.property_types[0] if criteria.property_types else "apartment"
-        category = "c208" if prop_type == "apartment" else "c209"
+    # Kleinanzeigen location ID for Hamburg
+    HAMBURG_LOCATION_ID = "l9409"
 
-        base = f"{self.BASE_URL}/s-wohnung-kaufen/hamburg/{category}"
+    def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
+        # Categories:
+        #   c196 = Eigentumswohnungen (apartments for sale)
+        #   c208 = Wohnung kaufen (all property types incl. houses & MFH)
+        #   c209 = Häuser kaufen (houses for sale)
+        prop_type = criteria.property_types[0] if criteria.property_types else "apartment"
+        if prop_type == "apartment":
+            category = "c196"
+            path_segment = "s-eigentumswohnung"
+        elif prop_type == "house":
+            category = "c209"
+            path_segment = "s-haus-kaufen"
+        elif prop_type == "multi_family":
+            # c208 covers MFH/Zinshäuser; filter by price range to get buy listings
+            category = "c208"
+            path_segment = "s-wohnung-kaufen"
+        else:
+            category = "c208"
+            path_segment = "s-wohnung-kaufen"
+
+        # Use location ID to restrict to Hamburg
+        base = f"{self.BASE_URL}/{path_segment}/hamburg/{category}{self.HAMBURG_LOCATION_ID}"
 
         params = []
         if criteria.budget_min > 0:
@@ -44,13 +65,10 @@ class KleinanzeigenScraper(BaseScraper):
         soup = BeautifulSoup(html, "lxml")
         results = []
 
-        # Kleinanzeigen uses article tags or ad-listitem class
-        for item in soup.select("article.aditem, li.ad-listitem, [data-adid]"):
-            ad_id = item.get("data-adid", "") or item.get("data-id", "")
-
+        # Kleinanzeigen uses article.aditem with data-adid
+        for item in soup.select("article.aditem"):
+            ad_id = item.get("data-adid", "")
             link = item.select_one("a[href*='/s-anzeige/']")
-            if not link:
-                link = item.select_one("a.ellipsis")
             if not link:
                 continue
 
@@ -60,40 +78,42 @@ class KleinanzeigenScraper(BaseScraper):
 
             results.append({"url": href, "id": ad_id})
 
+        # Fallback: try list items
+        if not results:
+            for item in soup.select("li.ad-listitem"):
+                link = item.select_one("a[href*='/s-anzeige/']")
+                if not link:
+                    continue
+                href = link.get("href", "")
+                if not href.startswith("http"):
+                    href = f"{self.BASE_URL}{href}"
+                ad_id = item.get("data-adid", "")
+                results.append({"url": href, "id": ad_id})
+
         return results
 
     def parse_listing_detail(self, html: str, url: str) -> Listing | None:
         soup = BeautifulSoup(html, "lxml")
 
         # Extract ad ID from URL
-        lid_match = re.search(r"/(\d+)$", url.rstrip("/"))
+        lid_match = re.search(r"/(\d+)-", url)
         listing_id = f"kleinanzeigen_{lid_match.group(1)}" if lid_match else f"kleinanzeigen_{hash(url)}"
 
         # Title
         title_el = soup.select_one("h1#viewad-title, h1")
         title = title_el.get_text(strip=True) if title_el else ""
 
-        # Price
+        # Price (from #viewad-price)
         price = None
-        price_el = soup.select_one("#viewad-price, .addetailslist--detail--value")
+        price_el = soup.select_one("#viewad-price")
         if price_el:
             price = clean_price(price_el.get_text())
 
         if not price:
-            # Try from attributes section
-            for el in soup.find_all(string=re.compile(r"Kaufpreis|Preis")):
-                parent = el.find_parent()
-                if parent:
-                    sibling = parent.find_next_sibling()
-                    if sibling:
-                        price = clean_price(sibling.get_text())
-                        if price:
-                            break
-
-        if not price:
             return None
 
-        # Parse attribute details
+        # Parse attribute details from .addetailslist--detail items
+        # Structure: <li class="addetailslist--detail">LabelText<span class="addetailslist--detail--value">Value</span></li>
         details = self._parse_details(soup)
 
         size = details.get("size")
@@ -103,21 +123,64 @@ class KleinanzeigenScraper(BaseScraper):
             return None
 
         # Address / Location
-        addr_el = soup.select_one("#viewad-locality, .addetailslist--detail")
+        addr_el = soup.select_one("#viewad-locality")
         address = addr_el.get_text(strip=True) if addr_el else ""
-
         zip_match = re.search(r"\b(\d{5})\b", address)
         zip_code = zip_match.group(1) if zip_match else ""
 
         # Description
-        desc_el = soup.select_one("#viewad-description-text, .describecontent")
+        desc_el = soup.select_one("#viewad-description-text")
         description = desc_el.get_text(strip=True)[:2000] if desc_el else None
 
-        # Features from description
-        page_text = (description or "").lower() + " " + soup.get_text().lower()
+        # Detect MFH from title/description keywords (strict)
+        combined_text = f"{title} {description or ''}".lower()
+        if any(kw in combined_text for kw in MFH_KEYWORDS):
+            details["property_type"] = "multi_family"
+
+        # Features from page text
+        page_text = ((description or "") + " " + soup.get_text()).lower()
         balcony = "balkon" in page_text
         garden = "garten" in page_text
         parking = any(w in page_text for w in ("stellplatz", "garage", "parkplatz"))
+
+        # === Extract enriched fields for price justification ===
+        combined = f"{title} {description or ''}".lower()
+
+        # Erbbaurecht detection
+        is_erbbaurecht = any(kw in combined for kw in ERBBAURECHT_KEYWORDS)
+
+        # Rented / Kapitalanlage detection
+        is_rented = any(kw in combined for kw in RENTED_KEYWORDS)
+        if not is_rented:
+            is_rented = any(kw in combined for kw in KAPITALANLAGE_KEYWORDS)
+
+        # Extract actual rent amount if mentioned
+        current_rent = None
+        rent_match = re.search(
+            r"(?:miete|mieteinnahmen|kaltmiete|nkm)[\s:]*(?:ca\.?\s*)?(?:€\s*)?([\d.,]+)\s*(?:€|eur|/mo)",
+            combined,
+        )
+        if not rent_match:
+            rent_match = re.search(r"(\d[\d.]*(?:,\d+)?)\s*(?:€|eur)\s*(?:kalt|netto|monatlich|/mon|p\.?\s*m)", combined)
+        if rent_match:
+            current_rent = clean_price(rent_match.group(1))
+            if current_rent and current_rent > 5000:
+                current_rent = None  # Likely parsed wrong
+
+        # WBS / social housing
+        is_wbs = any(kw in combined for kw in WBS_KEYWORDS)
+
+        # Dachgeschoss
+        is_dachgeschoss = any(kw in combined for kw in DACHGESCHOSS_KEYWORDS)
+
+        # Ausbau needed
+        is_ausbau = any(kw in combined for kw in AUSBAU_KEYWORDS)
+
+        # Number of units in building
+        num_units = None
+        units_match = re.search(r"(\d+)\s*(?:wohneinheiten|wohnungen|einheiten|parteien|we\b)", combined)
+        if units_match:
+            num_units = int(units_match.group(1))
 
         # Images
         image_urls = []
@@ -125,9 +188,6 @@ class KleinanzeigenScraper(BaseScraper):
             src = img.get("data-src") or img.get("src", "")
             if src and "placeholder" not in src:
                 image_urls.append(src)
-
-        # Year built from description
-        year_built = details.get("year_built")
 
         return Listing(
             id=listing_id,
@@ -140,7 +200,7 @@ class KleinanzeigenScraper(BaseScraper):
             address=address,
             district=detect_district(address, zip_code),
             zip_code=zip_code,
-            year_built=year_built,
+            year_built=details.get("year_built"),
             property_type=details.get("property_type", "apartment"),
             hausgeld=details.get("hausgeld"),
             balcony=balcony,
@@ -148,26 +208,47 @@ class KleinanzeigenScraper(BaseScraper):
             parking=parking,
             description=description,
             image_urls=image_urls[:10],
+            is_erbbaurecht=is_erbbaurecht,
+            is_rented=is_rented,
+            current_rent_monthly=current_rent,
+            is_wbs=is_wbs,
+            is_dachgeschoss=is_dachgeschoss,
+            is_ausbau_needed=is_ausbau,
+            num_units_in_building=num_units,
         )
 
     def _parse_details(self, soup: BeautifulSoup) -> dict:
-        """Extract structured details from Kleinanzeigen detail sections."""
+        """Extract structured details from Kleinanzeigen detail page.
+
+        The HTML structure is:
+        <li class="addetailslist--detail">
+            Wohnfläche              <-- bare text node (label)
+            <span class="addetailslist--detail--value">67,79 m²</span>
+        </li>
+        """
         details: dict = {}
 
-        # Look for detail items (Kleinanzeigen uses various layouts)
-        for item in soup.select(".addetailslist--detail, .attributelist--attribute"):
-            label_el = item.select_one(".addetailslist--detail--key, dt")
-            value_el = item.select_one(".addetailslist--detail--value, dd")
-
-            if not label_el or not value_el:
+        for item in soup.select(".addetailslist--detail"):
+            # Get the value span
+            value_el = item.select_one(".addetailslist--detail--value")
+            if not value_el:
                 continue
-
-            label = label_el.get_text(strip=True).lower()
             value = value_el.get_text(strip=True)
 
-            if "wohnfläche" in label or "fläche" in label:
+            # Get the label from the bare text nodes (before the span)
+            label_parts = []
+            for child in item.children:
+                if isinstance(child, NavigableString):
+                    text = child.strip()
+                    if text:
+                        label_parts.append(text)
+            label = " ".join(label_parts).lower()
+
+            if "wohnfläche" in label or label == "fläche":
                 details["size"] = clean_size(value)
-            elif "zimmer" in label:
+            elif "grundstücksfläche" in label:
+                details["plot_size"] = clean_size(value)  # Don't use as living area
+            elif label == "zimmer":
                 details["rooms"] = clean_rooms(value) or 0
             elif "baujahr" in label:
                 match = re.search(r"(\d{4})", value)
@@ -175,12 +256,13 @@ class KleinanzeigenScraper(BaseScraper):
                     details["year_built"] = int(match.group(1))
             elif "hausgeld" in label:
                 details["hausgeld"] = clean_price(value)
-            elif "art" in label:
-                if "wohnung" in value.lower():
+            elif "haustyp" in label or "wohnungstyp" in label or "art" in label:
+                vl = value.lower()
+                if any(w in vl for w in ("wohnung", "etagenwohnung", "apartment", "dachgeschoss", "erdgeschoss", "penthouse")):
                     details["property_type"] = "apartment"
-                elif "haus" in value.lower():
+                elif any(w in vl for w in ("haus", "einfamilienhaus", "reihenhaus", "doppelhaushälfte", "bungalow", "villa")):
                     details["property_type"] = "house"
-                elif "mehrfamilien" in value.lower():
+                elif "mehrfamilien" in vl:
                     details["property_type"] = "multi_family"
 
         return details

@@ -42,7 +42,17 @@ class Database:
                 listing_date TEXT,
                 description TEXT,
                 scraped_at TEXT NOT NULL,
-                image_urls TEXT DEFAULT '[]'
+                image_urls TEXT DEFAULT '[]',
+                is_erbbaurecht INTEGER DEFAULT 0,
+                is_rented INTEGER DEFAULT 0,
+                current_rent_monthly REAL,
+                is_wbs INTEGER DEFAULT 0,
+                sonderumlage REAL,
+                num_units_in_building INTEGER,
+                is_dachgeschoss INTEGER DEFAULT 0,
+                is_ausbau_needed INTEGER DEFAULT 0,
+                total_floors INTEGER,
+                plot_size_sqm REAL
             );
 
             CREATE TABLE IF NOT EXISTS analysis_results (

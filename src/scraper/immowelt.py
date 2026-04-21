@@ -1,42 +1,38 @@
-"""Immowelt.de scraper for Hamburg real estate listings."""
+"""Immowelt.de scraper for Hamburg real estate listings.
+
+Immowelt search pages return full listing data in data-testid elements.
+Detail pages return 403 for automated requests, so we extract all data
+directly from the search result cards.
+"""
 
 from __future__ import annotations
 
 import re
-import json
-import logging
 
 from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .utils import clean_price, clean_size, clean_rooms, detect_district, get_headers
-
-logger = logging.getLogger(__name__)
+from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
 class ImmoweltScraper(BaseScraper):
     PLATFORM_NAME = "immowelt"
     BASE_URL = "https://www.immowelt.de"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._playwright = None
-        self._browser = None
-
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
         prop_type = criteria.property_types[0] if criteria.property_types else "apartment"
         prop_map = {
             "apartment": "wohnungen",
             "house": "haeuser",
-            "multi_family": "mehrfamilienhaeuser",
+            "multi_family": "haeuser",  # MFH listed under houses on Immowelt
         }
         prop_path = prop_map.get(prop_type, "wohnungen")
 
         params = []
         if criteria.budget_min > 0:
             params.append(f"pmin={int(criteria.budget_min)}")
-        if criteria.budget_max < 1_000_000:
+        if criteria.budget_max < 50_000_000:
             params.append(f"pmax={int(criteria.budget_max)}")
         if criteria.min_size_sqm > 0:
             params.append(f"amin={int(criteria.min_size_sqm)}")
@@ -50,242 +46,218 @@ class ImmoweltScraper(BaseScraper):
             return f"{base}?{'&'.join(params)}"
         return base
 
-    def fetch(self, url: str) -> str | None:
-        """Immowelt often needs JS rendering. Try requests first, fall back to Playwright."""
-        html = super().fetch(url)
-        if html and self._has_content(html):
-            return html
+    def search(self, criteria: UserCriteria, max_pages: int = 5) -> list[Listing]:
+        """Override search to extract data directly from search result cards.
 
-        # Fallback to Playwright
-        return self._fetch_with_playwright(url)
+        Immowelt detail pages return 403 for automated requests, so we
+        parse all listing data directly from the search page cards.
+        """
+        all_listings: list[Listing] = []
+        seen_urls: set[str] = set()
 
-    def _has_content(self, html: str) -> bool:
-        """Check if HTML has actual listing content vs JS-only shell."""
+        for page in range(1, max_pages + 1):
+            url = self.build_search_url(criteria, page)
+            self.logger.info(f"Scraping page {page}: {url}")
+
+            html = self.fetch(url)
+            if not html:
+                self.logger.warning(f"Failed to fetch page {page}, stopping")
+                break
+
+            # Parse listings directly from search cards
+            listings = self._parse_search_cards(html)
+            if not listings:
+                self.logger.info(f"No results on page {page}, stopping")
+                break
+
+            for listing in listings:
+                if listing.url not in seen_urls and self._matches_criteria(listing, criteria):
+                    # For multi-family search, validate MFH
+                    if "multi_family" in criteria.property_types:
+                        if listing.property_type != "multi_family":
+                            continue
+                        text = f"{(listing.title or '').lower()} {(listing.description or '').lower()}"
+                        has_mfh_keyword = any(kw in text for kw in MFH_KEYWORDS)
+                        if not has_mfh_keyword and listing.size_sqm < 120:
+                            continue
+                    seen_urls.add(listing.url)
+                    all_listings.append(listing)
+                    self.logger.info(
+                        f"  Found: {listing.title[:50]} - "
+                        f"€{listing.price:,.0f} / {listing.size_sqm}m²"
+                    )
+
+        self.logger.info(f"immowelt: Found {len(all_listings)} valid listings")
+        return all_listings
+
+    def _parse_search_cards(self, html: str) -> list[Listing]:
+        """Parse listing data from search result cards using data-testid attributes.
+
+        Card structure:
+        <div data-testid="serp-core-classified-card-testid">
+          <a href="/expose/{id}">
+          <div data-testid="cardmfe-price-testid">269.000 € 5.839 €/m²</div>
+          <div data-testid="cardmfe-keyfacts-testid">2 Zimmer · 46,1 m² · 3. Geschoss</div>
+          <div data-testid="cardmfe-description-box-address">Street, District, Hamburg (ZIP)</div>
+        </div>
+        """
         soup = BeautifulSoup(html, "lxml")
-        # Look for listing elements
-        return bool(
-            soup.select("[class*='listitem'], [class*='estate'], [data-test*='result']")
-            or "estateid" in html.lower()
-        )
+        listings: list[Listing] = []
 
-    def _fetch_with_playwright(self, url: str) -> str | None:
-        """Fetch page using Playwright for JS-rendered content."""
-        try:
-            if not self._playwright:
-                from playwright.sync_api import sync_playwright
-                self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(headless=True)
+        cards = soup.select('[data-testid="serp-core-classified-card-testid"]')
+        if not cards:
+            # Fallback: find any container with expose links
+            cards = soup.select('[data-testid*="classified-card"]')
 
-            page = self._browser.new_page()
-            page.set_extra_http_headers({
-                "User-Agent": self.session.headers.get("User-Agent", ""),
-                "Accept-Language": "de-DE,de;q=0.9",
-            })
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            html = page.content()
-            page.close()
-            return html
-        except Exception as e:
-            logger.warning(f"Playwright fetch failed for {url}: {e}")
+        for card in cards:
+            listing = self._parse_single_card(card)
+            if listing:
+                listings.append(listing)
+
+        return listings
+
+    def _parse_single_card(self, card) -> Listing | None:
+        """Parse a single search result card into a Listing."""
+        # URL from expose link
+        link = card.select_one("a[href*='/expose/']")
+        if not link:
             return None
+        href = link.get("href", "")
+        if not href.startswith("http"):
+            href = f"{self.BASE_URL}{href}"
 
-    def parse_search_results(self, html: str) -> list[dict]:
-        soup = BeautifulSoup(html, "lxml")
-        results = []
+        eid_match = re.search(r"/expose/([\w-]+)", href)
+        eid = eid_match.group(1) if eid_match else str(hash(href))
+        listing_id = f"immowelt_{eid}"
 
-        # Immowelt listing cards
-        for item in soup.select("[class*='listitem'], [class*='EstateItem'], a[href*='/expose/']"):
-            link = item if item.name == "a" else item.select_one("a[href*='/expose/']")
-            if not link:
-                continue
-
-            href = link.get("href", "")
-            if not href.startswith("http"):
-                href = f"{self.BASE_URL}{href}"
-
-            # Extract estate ID
-            eid_match = re.search(r"/expose/(\w+)", href)
-            eid = eid_match.group(1) if eid_match else ""
-
-            results.append({"url": href, "id": eid})
-
-        # Also try extracting from embedded JSON/Next.js data
-        if not results:
-            results = self._parse_nextjs_data(soup)
-
-        return results
-
-    def _parse_nextjs_data(self, soup: BeautifulSoup) -> list[dict]:
-        """Immowelt may use Next.js with __NEXT_DATA__."""
-        results = []
-        script = soup.select_one("script#__NEXT_DATA__")
-        if script and script.string:
-            try:
-                data = json.loads(script.string)
-                # Navigate typical Next.js structure
-                props = data.get("props", {}).get("pageProps", {})
-                estates = props.get("estates", props.get("results", []))
-                if isinstance(estates, list):
-                    for estate in estates:
-                        eid = estate.get("id", estate.get("estateId", ""))
-                        if eid:
-                            results.append({
-                                "url": f"{self.BASE_URL}/expose/{eid}",
-                                "id": str(eid),
-                                "data": estate,  # Pre-parsed data
-                            })
-            except (json.JSONDecodeError, TypeError):
-                pass
-        return results
-
-    def parse_listing_detail(self, html: str, url: str) -> Listing | None:
-        soup = BeautifulSoup(html, "lxml")
-
-        # Try Next.js data first
-        listing = self._parse_from_nextjs(soup, url)
-        if listing:
-            return listing
-
-        # HTML parsing fallback
-        return self._parse_html_detail(soup, url)
-
-    def _parse_from_nextjs(self, soup: BeautifulSoup, url: str) -> Listing | None:
-        """Parse from __NEXT_DATA__ script."""
-        script = soup.select_one("script#__NEXT_DATA__")
-        if not script or not script.string:
-            return None
-
-        try:
-            data = json.loads(script.string)
-            estate = data.get("props", {}).get("pageProps", {}).get("estate", {})
-            if not estate:
-                return None
-
-            eid = estate.get("id", estate.get("estateId", ""))
-            listing_id = f"immowelt_{eid}" if eid else f"immowelt_{hash(url)}"
-
-            price = float(estate.get("price", {}).get("value", 0))
-            if not price:
-                return None
-
-            size = float(estate.get("areas", {}).get("livingArea", {}).get("value", 0))
-            if not size:
-                return None
-
-            address_data = estate.get("address", {})
-            address = f"{address_data.get('street', '')} {address_data.get('houseNumber', '')}, {address_data.get('zipCode', '')} {address_data.get('city', '')}".strip()
-            zip_code = str(address_data.get("zipCode", ""))
-
-            rooms = float(estate.get("rooms", {}).get("numberOfRooms", 0))
-            year_built = estate.get("constructionYear")
-
-            hausgeld = None
-            costs = estate.get("costs", {})
-            if "maintenanceCosts" in costs:
-                hausgeld = float(costs["maintenanceCosts"].get("value", 0))
-
-            return Listing(
-                id=listing_id,
-                platform="immowelt",
-                url=url,
-                title=estate.get("title", ""),
-                price=price,
-                size_sqm=size,
-                rooms=rooms,
-                address=address,
-                district=detect_district(address, zip_code),
-                zip_code=zip_code,
-                year_built=int(year_built) if year_built else None,
-                hausgeld=hausgeld,
-            )
-        except (json.JSONDecodeError, TypeError, ValueError, KeyError):
-            return None
-
-    def _parse_html_detail(self, soup: BeautifulSoup, url: str) -> Listing | None:
-        """Fallback HTML parsing for Immowelt expose pages."""
-        eid_match = re.search(r"/expose/(\w+)", url)
-        listing_id = f"immowelt_{eid_match.group(1)}" if eid_match else f"immowelt_{hash(url)}"
-
-        title_el = soup.select_one("h1")
-        title = title_el.get_text(strip=True) if title_el else ""
-
-        # Price
+        # Price from cardmfe-price-testid
         price = None
-        for selector in ["[data-test='price']", ".hardfact:has(.hardfact__label:contains('Kaufpreis'))"]:
-            try:
-                el = soup.select_one(selector)
-                if el:
-                    price = clean_price(el.get_text())
-                    if price:
-                        break
-            except Exception:
-                continue
-
-        if not price:
-            for el in soup.find_all(string=re.compile(r"Kaufpreis")):
-                parent = el.find_parent()
-                if parent:
-                    price = clean_price(parent.get_text())
-                    if price and price > 10000:
-                        break
+        price_el = card.select_one('[data-testid="cardmfe-price-testid"]')
+        if price_el:
+            price_text = price_el.get_text(strip=True)
+            # Text is like "269.000 €5.839 €/m²" - take the first price
+            price_match = re.match(r"([\d.]+(?:,\d+)?)\s*€", price_text)
+            if price_match:
+                price = clean_price(price_match.group(1) + " €")
 
         if not price:
             return None
 
-        # Size
-        size = None
-        for el in soup.find_all(string=re.compile(r"Wohnfläche|Fläche")):
-            parent = el.find_parent()
-            if parent:
-                size = clean_size(parent.get_text())
-                if size:
-                    break
+        # Keyfacts: "2 Zimmer · 46,1 m² · 3. Geschoss"
+        rooms = 0.0
+        size = 0.0
+        floor = None
+        keyfacts_el = card.select_one('[data-testid="cardmfe-keyfacts-testid"]')
+        if keyfacts_el:
+            keyfacts_text = keyfacts_el.get_text(strip=True)
+            # Parse rooms
+            rooms_match = re.search(r"([\d,]+)\s*Zimmer", keyfacts_text)
+            if rooms_match:
+                rooms = clean_rooms(rooms_match.group(1)) or 0
+
+            # Parse size
+            size_match = re.search(r"([\d.,]+)\s*m²", keyfacts_text)
+            if size_match:
+                size = clean_size(size_match.group(1)) or 0
+
+            # Parse floor
+            floor_match = re.search(r"(\d+)\.\s*(?:Geschoss|OG|Stock)", keyfacts_text)
+            if floor_match:
+                floor = int(floor_match.group(1))
 
         if not size:
             return None
 
-        # Rooms
-        rooms = 0.0
-        for el in soup.find_all(string=re.compile(r"Zimmer")):
-            parent = el.find_parent()
-            if parent:
-                r = clean_rooms(parent.get_text())
-                if r:
-                    rooms = r
-                    break
+        # Address: "Straße, Stadtteil, Hamburg (22089)"
+        address = ""
+        zip_code = ""
+        addr_el = card.select_one('[data-testid="cardmfe-description-box-address"]')
+        if addr_el:
+            address = addr_el.get_text(strip=True)
+            zip_match = re.search(r"\((\d{5})\)", address)
+            if zip_match:
+                zip_code = zip_match.group(1)
 
-        # Address
-        addr_el = soup.select_one("[data-test='address'], .location")
-        address = addr_el.get_text(strip=True) if addr_el else ""
-        zip_match = re.search(r"\b(\d{5})\b", address)
-        zip_code = zip_match.group(1) if zip_match else ""
+        # Title from description box
+        title = ""
+        # Try the main text content of the card
+        desc_el = card.select_one('[data-testid="cardmfe-description-box-text-test-id"]')
+        if desc_el:
+            full_text = desc_el.get_text(strip=True)
+            # Title is typically everything after the price/keyfacts
+            title = address or full_text[:80]
 
-        # Description
-        desc_el = soup.select_one("[data-test='description'], .section_objectDescription")
-        description = desc_el.get_text(strip=True)[:2000] if desc_el else None
+        # Energy rating
+        energy_el = card.select_one('[data-testid="card-mfe-energy-performance-class"]')
+        energy_rating = energy_el.get_text(strip=True) if energy_el else None
 
-        page_text = soup.get_text().lower()
+        # Description snippet from bottom of card (~200 chars)
+        description = None
+        desc_el = card.select_one('[data-testid="cardmfe-bottom-test-id"]')
+        if not desc_el:
+            desc_el = card.select_one('[data-testid="cardmfe-description-text-test-id"]')
+        if desc_el:
+            description = desc_el.get_text(strip=True)
+
+        # Agent/publisher name
+        agent_el = card.select_one('[data-testid="cardmfe-agency-publisher-xl-test-id"]')
+
+        # Detect property type from card text
+        property_type = "apartment"
+        full_text = card.get_text().lower()
+        if "mehrfamilienhaus" in full_text or "anlageimmobilie" in full_text:
+            property_type = "multi_family"
+        elif any(w in full_text for w in ("einfamilienhaus", "doppelhaushälfte", "reihenhaus", "reihenendhaus", "villa")):
+            property_type = "house"
+
+        # Detect tags (Neu, etc.)
+        tags = [t.get_text(strip=True) for t in card.select('[data-testid*="cardmfe-tag"]')]
+
+        # Detect features from description/card text
+        balcony = "balkon" in full_text
+        garden = "garten" in full_text
+        parking = any(w in full_text for w in ("stellplatz", "garage", "parkplatz", "tiefgarage"))
+
+        district = detect_district(address, zip_code)
+
+        # Build title from property type + address
+        type_label = {"apartment": "Wohnung", "house": "Haus", "multi_family": "Mehrfamilienhaus"}.get(property_type, "Immobilie")
+        title = f"{type_label} in {district}" if district else address
 
         return Listing(
             id=listing_id,
             platform="immowelt",
-            url=url,
+            url=href,
             title=title,
             price=price,
             size_sqm=size,
             rooms=rooms,
             address=address,
-            district=detect_district(address, zip_code),
+            district=district,
             zip_code=zip_code,
-            balcony="balkon" in page_text,
-            garden="garten" in page_text,
-            parking=any(w in page_text for w in ("stellplatz", "garage", "parkplatz")),
+            floor=floor,
+            energy_rating=energy_rating,
+            property_type=property_type,
             description=description,
+            balcony=balcony,
+            garden=garden,
+            parking=parking,
         )
 
-    def close(self):
-        if self._browser:
-            self._browser.close()
-        if self._playwright:
-            self._playwright.stop()
-        super().close()
+    # These are kept for API compatibility but search() no longer calls them
+    def parse_search_results(self, html: str) -> list[dict]:
+        soup = BeautifulSoup(html, "lxml")
+        results = []
+        for link in soup.select("a[href*='/expose/']"):
+            href = link.get("href", "")
+            if not href.startswith("http"):
+                href = f"{self.BASE_URL}{href}"
+            eid_match = re.search(r"/expose/([\w-]+)", href)
+            eid = eid_match.group(1) if eid_match else ""
+            if href not in [r["url"] for r in results]:
+                results.append({"url": href, "id": eid})
+        return results
+
+    def parse_listing_detail(self, html: str, url: str) -> Listing | None:
+        # Detail pages return 403 - this is kept as a no-op for compatibility
+        return None

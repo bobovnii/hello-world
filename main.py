@@ -37,6 +37,7 @@ def cmd_scrape(args):
     from src.scraper.immoscout import ImmoScoutScraper
     from src.scraper.kleinanzeigen import KleinanzeigenScraper
     from src.scraper.immowelt import ImmoweltScraper
+    from src.scraper.ohne_makler import OhneMaklerScraper
     from src.analyzer.market_data import HamburgMarketData
     from src.analyzer.scorer import DealScorer
 
@@ -51,7 +52,7 @@ def cmd_scrape(args):
     market_data = HamburgMarketData()
     scorer = DealScorer(market_data)
 
-    scrapers = [ImmoScoutScraper(), KleinanzeigenScraper(), ImmoweltScraper()]
+    scrapers = [ImmoScoutScraper(), KleinanzeigenScraper(), ImmoweltScraper(), OhneMaklerScraper()]
     all_listings = []
 
     print(f"Scraping Hamburg listings (budget: {criteria.budget_min:,.0f}-{criteria.budget_max:,.0f} EUR)...")
