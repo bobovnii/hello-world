@@ -176,6 +176,14 @@ def main():
     transport = "stdio"
     if "--http" in sys.argv:
         transport = "streamable-http"
+        # Disable DNS rebinding protection so tunneled (trycloudflare, ngrok) hosts work
+        from mcp.server.transport_security import TransportSecuritySettings
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+            allowed_hosts=["*"],
+            allowed_origins=["*"],
+        )
+        mcp.settings.host = "0.0.0.0"
     mcp.run(transport=transport)
 
 
