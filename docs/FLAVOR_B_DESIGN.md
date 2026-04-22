@@ -191,19 +191,40 @@ This prevents partial digests + silent user skips.
 
 ### 5.5 Schema migrations — PRAGMA user_version
 
+**All schema — including baseline — lives in numbered migration files.**
+No `_create_tables()` alongside `_migrate()`: the old function is retired.
+This avoids an ordering bug where a later migration (e.g. `ALTER TABLE user_criteria`)
+would run before the baseline created the table.
+
 Do NOT use `ALTER TABLE ADD COLUMN IF NOT EXISTS` — not reliably supported in
-SQLite. Use introspection via `PRAGMA table_info` + numbered migration files:
+SQLite. Use introspection via `PRAGMA table_info` when needed + numbered migration
+files:
 
 ```
 src/database/migrations/
-  001_users_and_identities.sql
-  002_user_criteria_alerts_fields.sql
-  003_seen_deals.sql
-  004_digest_runs.sql
+  000_baseline.sql                       # listings, analysis_results, user_criteria (as shipped pre-Flavor B)
+  001_users_and_identities.sql           # users, telegram_identities
+  002_user_criteria_alerts_fields.sql    # alerts_enabled, alerts_frequency, language, created_at, last_digest_at
+  003_seen_deals.sql                     # seen_deals table + indexes
+  004_digest_runs.sql                    # digest_runs, digest_deliveries
 ```
 
-Applied on startup by `_migrate()`, ordered, tracked via `PRAGMA user_version`.
-Failures raise and halt the bot — no silent half-migrations.
+Applied on startup by `_migrate()`, ordered by numeric prefix, tracked via
+`PRAGMA user_version`.
+
+**Transactional correctness**: `sqlite3.executescript()` implicitly COMMITs any
+pending transaction and does NOT roll back on failure. The migration runner must
+therefore:
+
+- Wrap each migration in an explicit `BEGIN; ... COMMIT;` inside the .sql file, OR
+- Parse the SQL into individual statements and execute them inside a Python-level
+  `conn.execute("BEGIN")` / `COMMIT` / `ROLLBACK on exception`.
+
+The second is safer and easier to test: on failure, the whole file's statements
+are rolled back AND `user_version` is left untouched. Tests MUST verify: if a
+migration's 2nd statement fails, the 1st statement's effect is not persisted.
+
+Failures raise and halt the bot — no silent half-migrations, no partial state.
 
 ### 5.6 SQLite connection rules (applied on EVERY connection)
 
@@ -511,6 +532,21 @@ adds time within the phase.
 - Scraping cost <€50/mo total
 
 ## 16. Review cycle history
+
+### V2 → V2.1 changelog (Phase 1 critique round 1)
+
+Critique on the V2 migration plan surfaced two ordering/correctness bugs during
+Phase 1 implementation:
+
+- §5.5 rewritten: baseline (`listings`, `analysis_results`, `user_criteria`)
+  moves into `000_baseline.sql`. Retires `_create_tables()`. Avoids the bug
+  where §5.2's `ALTER TABLE user_criteria` migration would fail on a fresh DB
+  because the table didn't yet exist when `_migrate()` ran.
+- §5.5 expanded: `sqlite3.executescript()` does NOT wrap in a transaction and
+  does NOT roll back partial progress on failure. Migrations must use an
+  explicit `BEGIN/COMMIT/ROLLBACK` pattern (either inside the .sql file or in
+  the Python runner). Design now requires a test that verifies mid-migration
+  failure rolls back prior statements.
 
 ### V1 → V2 changelog
 
