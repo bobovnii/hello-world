@@ -393,14 +393,14 @@ class TestMigrations:
         finally:
             db.close()
 
-    def test_legacy_pre_flavor_b_db_migrates_to_v1(self, db_path):
+    def test_legacy_pre_flavor_b_db_migrates_to_latest(self, db_path):
         """A DB previously initialized by the old _create_tables() at
-        ``user_version=0`` must migrate cleanly to ``user_version=1`` after
-        running _migrate() with 000 and 001 present.
+        ``user_version=0`` must migrate cleanly to the highest migration
+        version present on disk.
 
         Proves CRITICAL #1's acceptance test from the Phase 1 critique:
         legacy DBs retain their existing tables (CREATE TABLE IF NOT EXISTS
-        is a no-op) while the new 001 migration adds users + identities.
+        is a no-op) while the new migrations extend the schema.
         """
         # Simulate a DB from the pre-Flavor-B era by applying a shape
         # close to the old _create_tables() body directly. Leaves
@@ -440,10 +440,11 @@ class TestMigrations:
 
         db = Database(db_path=db_path)
         try:
-            # user_version advanced to the highest migration number (1 for now).
+            # user_version advanced to the highest migration number present.
             v = db.conn.execute("PRAGMA user_version").fetchone()[0]
-            expected = max(v for v, _ in Database._discover_migrations())
-            assert v == expected == 1
+            expected = max(ver for ver, _ in Database._discover_migrations())
+            assert v == expected
+            assert expected >= 1, "at least 001_users_and_identities must apply"
 
             tables = {
                 r[0]

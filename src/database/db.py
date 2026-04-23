@@ -38,6 +38,7 @@ import logging
 import re
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from .models import Listing, UserCriteria, AnalysisResult
@@ -467,6 +468,39 @@ class Database:
         if row:
             return UserCriteria.from_dict(dict(row))
         return None
+
+    # ------------------------------------------------------------------
+    # Seen deals (Telegram channel dedup)
+    # ------------------------------------------------------------------
+    def get_seen_listing_ids(self, channel: str) -> set[str]:
+        """Return the set of listing_ids already posted to this channel."""
+        rows = self._conn().execute(
+            "SELECT listing_id FROM seen_deals WHERE channel = ?", (channel,)
+        ).fetchall()
+        return {r["listing_id"] for r in rows}
+
+    def mark_seen(
+        self,
+        channel: str,
+        listing_ids: list[str],
+        search_slug: str = "",
+    ) -> None:
+        """Record that these listings have been posted to this channel.
+
+        Idempotent: uses INSERT OR IGNORE so re-marking an already-seen
+        listing is a no-op.
+        """
+        if not listing_ids:
+            return
+        now = datetime.now().isoformat()
+        conn = self._conn()
+        with self._write_lock:
+            conn.executemany(
+                "INSERT OR IGNORE INTO seen_deals "
+                "(channel, listing_id, seen_at, search_slug) VALUES (?, ?, ?, ?)",
+                [(channel, lid, now, search_slug) for lid in listing_ids],
+            )
+            conn.commit()
 
     # ------------------------------------------------------------------
     # Lifecycle

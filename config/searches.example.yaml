@@ -1,0 +1,72 @@
+# Hamburg Real Estate Deal Finder - Telegram digest configuration.
+#
+# Copy this file to `config/searches.yaml` and edit to match your needs.
+# `searches.yaml` is gitignored so your real config never leaks.
+#
+# Run: python scripts/send_telegram_digest.py
+# Dry-run (no messages sent): python scripts/send_telegram_digest.py --dry-run
+
+telegram:
+  # Name of the env var holding your bot token (get it from @BotFather on Telegram).
+  bot_token_env: TELEGRAM_BOT_TOKEN
+
+  # Target for digest messages. Either:
+  #   - "@your_channel_username" (make sure the bot is added as admin of the channel)
+  #   - numeric chat_id (e.g. your own user to test: message @userinfobot on Telegram)
+  channel: "@HamburgDealsDemo"
+
+
+output:
+  # Maximum number of deals posted per search each day.
+  max_deals_per_search: 5
+
+  # If true, deals already posted (tracked in seen_deals table) are skipped.
+  # First run for a new search will post up to max_deals_per_search historical matches.
+  skip_seen: true
+
+  # Display language for message text. Currently only "en" is supported;
+  # criteria keywords (districts, Stadtteil names) remain in German regardless.
+  language: en
+
+
+# List of saved searches. Each one runs independently and posts its own section.
+searches:
+  - slug: desy_2room_250k
+    name: "2-Zimmer bei DESY <250k"
+    budget_min: 50000
+    budget_max: 250000
+    min_rooms: 2
+    min_size_sqm: 30
+    property_type: apartment          # apartment | house | multi_family
+    districts: [Altona, Eimsbüttel]   # empty [] = all Hamburg
+    # Financing & scoring params
+    equity_pct: 20
+    interest_rate_pct: 3.5
+    loan_term_years: 25
+    risk_tolerance: moderate          # conservative | moderate | aggressive
+
+  - slug: desy_3room_300k
+    name: "3-Zimmer bei DESY <300k"
+    budget_min: 100000
+    budget_max: 300000
+    min_rooms: 3
+    min_size_sqm: 50
+    property_type: apartment
+    districts: [Altona, Eimsbüttel]
+    equity_pct: 20
+    interest_rate_pct: 3.5
+    loan_term_years: 25
+    risk_tolerance: moderate
+
+  - slug: mfh_desy_1_5m
+    name: "Mehrfamilienhaus bei DESY <1.5M"
+    budget_min: 200000
+    budget_max: 1500000
+    min_rooms: 2
+    min_size_sqm: 80
+    property_type: multi_family
+    districts: [Altona, Eimsbüttel]
+    equity_pct: 25
+    interest_rate_pct: 3.5
+    loan_term_years: 25
+    risk_tolerance: moderate
