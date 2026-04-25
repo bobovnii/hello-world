@@ -160,6 +160,9 @@ MFH_KEYWORDS = [
 ERBBAURECHT_KEYWORDS = [
     "erbbaurecht", "erbpacht", "erbbauzins", "erbbau",
     "pachtgrundstück", "leasehold",
+    # Hamburg-Makler critique iter-2: common wording the original list missed.
+    "pachtvertrag", "heimfallrecht", "im erbbau",
+    "grundstück gepachtet", "auf erbpacht",
 ]
 
 RENTED_KEYWORDS = [

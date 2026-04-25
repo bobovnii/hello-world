@@ -13,7 +13,19 @@ class MetricsCalculator:
         self.market = market_data
 
     def calculate(self, listing: Listing, criteria: UserCriteria) -> AnalysisResult:
-        """Calculate all investment metrics for a listing."""
+        """Calculate all investment metrics for a listing.
+
+        Rent precedence: when ``listing.is_rented`` AND
+        ``listing.current_rent_monthly`` is a positive number, use the
+        actual contractual rent for yield/cashflow/cap-rate. Wishful
+        market estimates inflate yields on tenanted units that are
+        often capped by old contracts or Sozialbindung. Only fall back
+        to the market estimate when the unit is vacant or the actual
+        rent is unknown.
+
+        Purchase costs are platform-aware: see ``_purchase_costs_pct``
+        for the commission-free carve-out.
+        """
         district = listing.district or "Hamburg"
 
         # Basic price metrics
@@ -21,8 +33,8 @@ class MetricsCalculator:
         district_avg = self.market.get_avg_price_sqm(district)
         price_vs_market = ((price_per_sqm - district_avg) / district_avg * 100) if district_avg else 0
 
-        # Purchase costs
-        purchase_costs_pct = self.market.total_purchase_costs_pct
+        # Purchase costs (platform-aware: commission-free → drop Maklercourtage)
+        purchase_costs_pct = self._purchase_costs_pct(listing)
         total_purchase_cost = listing.price * (1 + purchase_costs_pct / 100)
 
         # Financing
@@ -41,6 +53,14 @@ class MetricsCalculator:
         )
         if is_uninhabitable:
             estimated_rent = 0.0
+        elif (
+            listing.is_rented
+            and listing.current_rent_monthly is not None
+            and listing.current_rent_monthly > 0
+        ):
+            # Tenanted with known rent: trust the contract, not market wishful
+            # thinking. Old contracts / Sozialbindung often cap below market.
+            estimated_rent = float(listing.current_rent_monthly)
         else:
             estimated_rent = self.market.estimate_monthly_rent(district, listing.size_sqm)
 
@@ -83,6 +103,45 @@ class MetricsCalculator:
             mortgage_monthly=round(mortgage_monthly, 2),
             equity_required=round(equity_required, 2),
         )
+
+    # Platforms that are typically commission-free (no Maklercourtage).
+    _COMMISSION_FREE_PLATFORMS: frozenset[str] = frozenset(
+        {"ohne-makler", "kleinanzeigen"}
+    )
+
+    # Description markers that indicate the seller is paying no commission
+    # regardless of platform.
+    _COMMISSION_FREE_MARKERS: tuple[str, ...] = (
+        "provisionsfrei",
+        "ohne maklerprovision",
+        "ohne provision",
+        "courtagefrei",
+        "maklerfrei",
+    )
+
+    def _purchase_costs_pct(self, listing: Listing) -> float:
+        """Total Nebenkosten as percentage of purchase price.
+
+        Returns the full purchase costs from market data
+        (Grunderwerbsteuer + Notar + Grundbuch + Maklercourtage) by
+        default. When the listing is on a commission-free platform
+        (``ohne-makler``, ``kleinanzeigen``) OR the description carries
+        an explicit commission-free marker (``provisionsfrei`` etc.),
+        the Maklercourtage component is dropped from the total.
+
+        The breakdown is read from ``hamburg_market_data.json`` so
+        editing the JSON re-tunes the calculation without code changes.
+        """
+        breakdown = self.market.purchase_costs_breakdown
+        platform = (listing.platform or "").lower().strip()
+        desc_lower = (listing.description or "").lower()
+        commission_free = (
+            platform in self._COMMISSION_FREE_PLATFORMS
+            or any(marker in desc_lower for marker in self._COMMISSION_FREE_MARKERS)
+        )
+        if commission_free:
+            return sum(v for k, v in breakdown.items() if k != "makler")
+        return sum(breakdown.values())
 
     @staticmethod
     def _calculate_mortgage(

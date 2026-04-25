@@ -164,7 +164,17 @@ class UserCriteria:
 
 @dataclass
 class AnalysisResult:
-    """Analysis output for a single listing."""
+    """Analysis output for a single listing.
+
+    Sub-score fields (``score_price``, ``score_yield``, ``score_cashflow``,
+    ``score_location``) are intentionally **dataclass-only** for the
+    iter-2 batch — they are NOT persisted to the ``analysis_results``
+    table yet (no migration). The scorer populates them in-memory and the
+    Telegram digest renders them; reloads from the DB will see the
+    default ``0.0`` for each. The next schema-change batch will add a
+    migration to persist them. ``from_dict`` filters unknown DB columns
+    so old rows reload cleanly even when the column set drifts.
+    """
 
     listing_id: str
     price_per_sqm: float = 0.0
@@ -183,10 +193,23 @@ class AnalysisResult:
     deal_score: float = 0.0  # 0-100
     undervalue_reasons: list[str] = field(default_factory=list)
     analyzed_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # Sub-scores (dataclass-only, not persisted yet — see class docstring).
+    # Default 0.0 means "unknown / reloaded-from-DB"; a fresh analysis
+    # will populate non-zero values via DealScorer.
+    score_price: float = 0.0
+    score_yield: float = 0.0
+    score_cashflow: float = 0.0
+    score_location: float = 0.0
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["undervalue_reasons"] = json.dumps(d["undervalue_reasons"])
+        # Strip sub-scores: not persisted yet (no DB column). Pulling them
+        # into to_dict() would break save_analysis() — it does `INSERT OR
+        # REPLACE INTO analysis_results (cols...)` and SQLite errors on
+        # unknown column names.
+        for k in ("score_price", "score_yield", "score_cashflow", "score_location"):
+            d.pop(k, None)
         return d
 
     @classmethod
@@ -194,4 +217,8 @@ class AnalysisResult:
         d = dict(d)
         if isinstance(d.get("undervalue_reasons"), str):
             d["undervalue_reasons"] = json.loads(d["undervalue_reasons"])
+        # Filter unknown keys so DB rows from older schemas reload cleanly
+        # (mirrors Listing.from_dict).
+        known = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)

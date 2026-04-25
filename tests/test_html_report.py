@@ -264,6 +264,22 @@ class TestDescriptionTruncation:
 # preserved verbatim, so a higher-score deal passed first appears first.
 # ---------------------------------------------------------------------------
 
+class TestGesamtkostenRow:
+    """iter-2 item 6 (mirror) — finance section must show all-in cost."""
+
+    def test_gesamtkosten_row_present_with_value(self):
+        listing = _listing()
+        analysis = _analysis(total_purchase_cost=355_000.0)
+        html_out = build_digest_html(
+            "Demo", "demo", [(listing, analysis)],
+            generated_at=datetime(2026, 4, 25, 8, 0),
+        )
+        assert "Gesamtkosten (inkl. NK)" in html_out
+        # Value is formatted with comma thousands and renders in the same
+        # row vicinity as the label.
+        assert "355,000" in html_out
+
+
 class TestSortPreservedByCaller:
     def test_deals_sorted_by_score_desc(self):
         low = (

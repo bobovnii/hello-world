@@ -207,12 +207,12 @@ def _time_on_market_line(listing: Listing) -> str:
     """German one-liner describing days-on-market.
 
     Honest framing: this is "time since we first scraped it", NOT "time
-    since the listing was published". The original publication date is
-    not reliably recoverable from the scrapers (often a relative phrase
-    like "vor 3 Tagen"), so we report what we can defend.
+    since the listing was published". The 0-day bucket says "Neu im Bot"
+    rather than "Neu heute" because the listing may be months old on
+    ImmoScout — we only know when WE first saw it.
 
     Buckets:
-    - 0 days   -> "Neu heute"
+    - 0 days   -> "Neu im Bot"
     - 1 day    -> "1 Tag im Markt"
     - 2..59    -> "N Tage im Markt"
     - >=60     -> "N Tage im Markt — möglicherweise verhandelbar"
@@ -224,7 +224,7 @@ def _time_on_market_line(listing: Listing) -> str:
     """
     days = listing.days_on_market
     if days <= 0:
-        body = "Neu heute"
+        body = "Neu im Bot"
     elif days == 1:
         body = "1 Tag im Markt"
     elif days < 60:
@@ -232,6 +232,41 @@ def _time_on_market_line(listing: Listing) -> str:
     else:
         body = f"{days} Tage im Markt — möglicherweise verhandelbar"
     return f"🕐 {body}"
+
+
+def _sub_score_sparkline(analysis) -> str:
+    """Return a short ``(Pr85·Y40·CF60·Loc70)`` sparkline.
+
+    Reloaded-from-DB analyses have all four sub-scores at the dataclass
+    default of 0.0 (no DB column persists them yet). When all four are
+    exactly zero we render an em-dash placeholder so the user isn't
+    misled into thinking the deal is uniformly bad.
+    """
+    sp = analysis.score_price
+    sy = analysis.score_yield
+    sc = analysis.score_cashflow
+    sl = analysis.score_location
+    if sp == 0.0 and sy == 0.0 and sc == 0.0 and sl == 0.0:
+        return "(Pr—·Y—·CF—·Loc—)"
+    return f"(Pr{sp:.0f}·Y{sy:.0f}·CF{sc:.0f}·Loc{sl:.0f})"
+
+
+def _baujahr_energie_line(listing: Listing) -> str | None:
+    """Combined Baujahr + Energie line.
+
+    Returns None when neither field is set so callers can omit the
+    line entirely. Energy ratings are uppercased ("F" not "f") to match
+    the rest of the card.
+    """
+    parts: list[str] = []
+    if listing.year_built:
+        parts.append(f"BJ {listing.year_built}")
+    er = (listing.energy_rating or "").strip().upper()
+    if er:
+        parts.append(f"Energie {er}")
+    if not parts:
+        return None
+    return "🏗️ " + " · ".join(parts)
 
 
 def format_deal(listing: Listing, analysis) -> str:
@@ -254,14 +289,20 @@ def format_deal(listing: Listing, analysis) -> str:
     title = (listing.title or "")[:90]
 
     tom_line = _time_on_market_line(listing)
+    sparkline = _sub_score_sparkline(analysis)
+
+    bj_line = _baujahr_energie_line(listing)
+    bj_block = f"\n{bj_line}" if bj_line else ""
 
     msg = (
         f"🏠 *{district}* · {listing.rooms:.0f} Zi · {listing.size_sqm:.0f} m²\n"
         f"💰 *{listing.price:,.0f} €*  ({analysis.price_per_sqm:,.0f} €/m² · "
-        f"{analysis.price_vs_market_pct:+.0f}%)\n"
-        f"🎯 Score {analysis.deal_score:.0f}/100 · "
+        f"{analysis.price_vs_market_pct:+.0f}%) · "
+        f"💵 {analysis.total_purchase_cost:,.0f} € all-in\n"
+        f"🎯 Score {analysis.deal_score:.0f}/100 {sparkline} · "
         f"Rendite {analysis.gross_rental_yield_pct:.1f}% · "
-        f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo\n"
+        f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo"
+        f"{bj_block}\n"
         f"{tom_line}"
         f"{flag_line}"
         f"{sig_line}"
@@ -404,15 +445,18 @@ async def main_async(args) -> int:
         seen_before = db.get_seen_listing_ids(channel) if skip_seen else set()
         listings = [l for l in listings if l.id not in seen_before]
 
-        # Persist listings first (required for seen_deals FK)
-        if listings:
-            db.save_listings(listings)
-
-        # Score and pick top N
+        # Score FIRST so the undervalue detector can mutate enriched fields
+        # (is_erbbaurecht, is_rented, current_rent_monthly, ...) on the
+        # Listing dataclass, then persist with those mutations applied.
+        # If we saved before scoring, those flips would never reach the DB.
         scored = scorer.score_and_rank(listings, criteria)
         top = scored[:max_deals]
 
-        # Persist analyses
+        # Persist listings (now with detector-mutated flags) and analyses.
+        # Save listings before analyses so the FK on analysis_results.listing_id
+        # has a target row.
+        if listings:
+            db.save_listings(listings)
         for _, analysis in top:
             db.save_analysis(analysis)
 

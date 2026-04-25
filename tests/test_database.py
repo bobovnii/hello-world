@@ -156,6 +156,59 @@ class TestModels:
         assert restored.districts == ["Altona", "Harburg"]
         assert restored.property_types == ["apartment", "house"]
 
+    def test_analysis_result_from_dict_tolerates_missing_subscore_keys(self):
+        """iter-2 item 8: ``AnalysisResult`` adds optional sub-score fields
+        (``score_price``, ...) that are NOT yet persisted to the DB. A row
+        loaded back from ``analysis_results`` must therefore reload cleanly
+        even though those keys are absent from the dict, AND the defaults
+        must be 0.0 so the digest's em-dash fallback fires.
+        """
+        # Mimic a row from the existing analysis_results schema: every
+        # persisted column is present, none of the new sub-score columns are.
+        legacy_row = {
+            "listing_id": "old_1",
+            "price_per_sqm": 4000.0,
+            "district_avg_price_sqm": 5000.0,
+            "price_vs_market_pct": -20.0,
+            "estimated_rent_monthly": 1100.0,
+            "gross_rental_yield_pct": 4.4,
+            "net_rental_yield_pct": 3.0,
+            "cap_rate_pct": 3.2,
+            "monthly_cashflow": 50.0,
+            "cash_on_cash_return_pct": 4.0,
+            "total_purchase_cost": 350_000.0,
+            "mortgage_monthly": 1200.0,
+            "equity_required": 70_000.0,
+            "deal_score": 65.0,
+            "undervalue_reasons": "[]",
+            "analyzed_at": "2026-04-01T08:00:00",
+        }
+        # Key assertion: this must NOT raise.
+        result = AnalysisResult.from_dict(legacy_row)
+        # Sub-scores fall back to defaults.
+        assert result.score_price == 0.0
+        assert result.score_yield == 0.0
+        assert result.score_cashflow == 0.0
+        assert result.score_location == 0.0
+        # And persisted fields survived.
+        assert result.deal_score == 65.0
+        assert result.listing_id == "old_1"
+
+    def test_analysis_result_from_dict_filters_unknown_columns(self):
+        """Future-proofing: unknown columns from a newer schema must not
+        raise ``TypeError: unexpected keyword argument`` on rollback."""
+        d = {
+            "listing_id": "x",
+            "deal_score": 50.0,
+            "undervalue_reasons": "[]",
+            # Mystery future column.
+            "future_score_factor": 0.42,
+        }
+        # Must not raise.
+        result = AnalysisResult.from_dict(d)
+        assert result.listing_id == "x"
+        assert result.deal_score == 50.0
+
 
 # ---------------------------------------------------------------------------
 # Migration / schema tests (FLAVOR_B_DESIGN §5.5)

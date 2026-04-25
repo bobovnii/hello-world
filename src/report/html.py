@@ -154,7 +154,7 @@ def _flag_badges(listing: Listing) -> list[tuple[str, str]]:
 def _time_on_market(listing: Listing) -> str:
     days = listing.days_on_market
     if days <= 0:
-        return "Neu heute"
+        return "Neu im Bot"
     if days == 1:
         return "1 Tag im Markt"
     if days < 60:
@@ -250,6 +250,7 @@ def _render_deal(listing: Listing, analysis: AnalysisResult) -> str:
     # Financial KV grid.
     fin_rows: list[tuple[str, str]] = [
         ("Kaufpreis", _esc(_money(listing.price))),
+        ("Gesamtkosten (inkl. NK)", _esc(_money(analysis.total_purchase_cost))),
         ("Preis / m²", _esc(_money(analysis.price_per_sqm))),
         ("Marktdurchschnitt €/m²", _esc(_money(analysis.district_avg_price_sqm))),
         ("Abweichung Markt", _esc(_pct(analysis.price_vs_market_pct, sign=True))),

@@ -63,6 +63,14 @@ class DealScorer:
         undervalue_score = self._score_undervalue(reasons)
         location_score = self._score_location(listing.district)
 
+        # Surface the four headline sub-scores on the analysis dataclass
+        # so the digest card can render a Pr/Y/CF/Loc sparkline. Stored
+        # in-memory only for now — see AnalysisResult docstring.
+        analysis.score_price = round(price_score, 1)
+        analysis.score_yield = round(yield_score, 1)
+        analysis.score_cashflow = round(cashflow_score, 1)
+        analysis.score_location = round(location_score, 1)
+
         # Weighted composite
         total = (
             price_score * weights["price_below_market"]

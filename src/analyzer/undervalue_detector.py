@@ -73,7 +73,9 @@ HIGH_HAUSGELD_KEYWORDS = [
 NOISE_KEYWORDS = [
     "straßenlärm", "bahnlärm", "fluglärm", "lärm",
     "hauptstraße", "durchgangsstraße", "einflugschneise",
-    "lärmbelastung", "schallschutz",
+    "lärmbelastung",
+    # "schallschutz" removed: it's a *mitigation* word ("Schallschutzfenster"),
+    # not a noise-exposure red flag. False-positive on most listings.
 ]
 
 GROUND_FLOOR_KEYWORDS = [
@@ -158,27 +160,26 @@ class UndervalueDetector:
             except ValueError:
                 pass
 
-        # Below implied value
-        if listing.size_sqm > 0:
-            avg_rent = self.market.get_avg_rent_sqm(listing.district or "Hamburg")
-            if avg_rent > 0:
-                annual_rent = listing.size_sqm * avg_rent * 12
-                implied_value = annual_rent / 0.03
-                if listing.price < implied_value * 0.85:
-                    reasons.append(
-                        f"[+] Price below implied value "
-                        f"(€{listing.price:,.0f} vs est. €{implied_value:,.0f})"
-                    )
-
         # === RED FLAGS (why it's cheap - needs due diligence) ===
 
-        # Erbbaurecht (leasehold) - biggest price reducer
-        if listing.is_erbbaurecht or self._has_keywords(text, ERBBAURECHT_KEYWORDS):
+        # Erbbaurecht (leasehold) - biggest price reducer.
+        # Beyond keyword hits, also catch the year-pinned phrasing
+        # "pachtvertrag bis 2087" / "pacht bis 19xx|20xx" which the flat
+        # keyword list cannot express.
+        erbbau_regex_hit = bool(re.search(r"pacht\w*\s+bis\s+(19|20)\d{2}", text))
+        if (
+            listing.is_erbbaurecht
+            or self._has_keywords(text, ERBBAURECHT_KEYWORDS)
+            or erbbau_regex_hit
+        ):
             listing.is_erbbaurecht = True
-            reasons.append(
+            erbbau_msg = (
                 "[!] ERBBAURECHT (leasehold land) - you don't own the land. "
                 "Typically 20-40% cheaper. Check: lease expiry date, annual Erbbauzins, renewal terms"
             )
+            # Don't double-emit if a prior keyword hit already added it.
+            if erbbau_msg not in reasons:
+                reasons.append(erbbau_msg)
 
         # Currently rented (vermietet)
         if listing.is_rented or self._has_keywords(text, RENTED_KEYWORDS_BROAD):
