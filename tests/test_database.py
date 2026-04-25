@@ -156,6 +156,28 @@ class TestModels:
         assert restored.districts == ["Altona", "Harburg"]
         assert restored.property_types == ["apartment", "house"]
 
+    def test_criteria_carries_city_field(self):
+        """CITY-SUPPORT-1: ``city`` field round-trips through to/from_dict."""
+        criteria = UserCriteria(city="berlin")
+        restored = UserCriteria.from_dict(criteria.to_dict())
+        assert restored.city == "berlin"
+
+    def test_criteria_default_city_is_hamburg(self):
+        """Backward compat: existing callers that omit city get Hamburg."""
+        assert UserCriteria().city == "hamburg"
+
+    def test_criteria_from_dict_filters_unknown_keys(self):
+        """A dict carrying a future column must NOT raise TypeError.
+
+        Mirrors ``Listing.from_dict`` / ``AnalysisResult.from_dict`` so
+        forward-compat schema drift doesn't crash the loader.
+        """
+        d = UserCriteria(city="dresden").to_dict()
+        d["future_unknown_column"] = "value-from-tomorrow"
+        # Must not raise.
+        restored = UserCriteria.from_dict(d)
+        assert restored.city == "dresden"
+
     def test_analysis_result_from_dict_tolerates_missing_subscore_keys(self):
         """iter-2 item 8: ``AnalysisResult`` adds optional sub-score fields
         (``score_price``, ...) that are NOT yet persisted to the DB. A row

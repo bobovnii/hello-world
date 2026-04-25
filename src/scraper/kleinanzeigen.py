@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup, NavigableString
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import get_city
 from .utils import (
     clean_price, clean_size, clean_rooms, detect_district,
     MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
@@ -19,7 +20,8 @@ class KleinanzeigenScraper(BaseScraper):
     PLATFORM_NAME = "kleinanzeigen"
     BASE_URL = "https://www.kleinanzeigen.de"
 
-    # Kleinanzeigen location ID for Hamburg
+    # Kept for backward compat — the active value comes from the city
+    # registry. Tests still assert the Hamburg URL contains this token.
     HAMBURG_LOCATION_ID = "l9409"
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
@@ -42,8 +44,17 @@ class KleinanzeigenScraper(BaseScraper):
             category = "c208"
             path_segment = "s-wohnung-kaufen"
 
-        # Use location ID to restrict to Hamburg
-        base = f"{self.BASE_URL}/{path_segment}/hamburg/{category}{self.HAMBURG_LOCATION_ID}"
+        # CITY-SUPPORT-1: per-city path + numeric location ID.
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+            city_path = city.kleinanzeigen_path
+            location_id = city.kleinanzeigen_location_id
+        except ValueError:
+            city_path = "hamburg"
+            location_id = self.HAMBURG_LOCATION_ID
+
+        # Use location ID to restrict to the city
+        base = f"{self.BASE_URL}/{path_segment}/{city_path}/{category}{location_id}"
 
         params = []
         if criteria.budget_min > 0:

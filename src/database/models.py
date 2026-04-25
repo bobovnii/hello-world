@@ -143,6 +143,10 @@ class UserCriteria:
     min_cashflow_monthly: float = 0.0
     # Scoring preference
     risk_tolerance: str = "moderate"  # conservative | moderate | aggressive
+    # City slug (CITY-SUPPORT-1): identifies which city the search targets.
+    # Defaults to "hamburg" so existing pre-multi-city callers/tests keep
+    # working unchanged. Resolved against ``src.scraper.city_registry``.
+    city: str = "hamburg"
     # Telegram
     chat_id: int | None = None
 
@@ -159,6 +163,12 @@ class UserCriteria:
             d["property_types"] = json.loads(d["property_types"])
         if isinstance(d.get("districts"), str):
             d["districts"] = json.loads(d["districts"])
+        # Filter unknown keys so DB rows from older/newer schemas reload
+        # cleanly (mirrors ``Listing.from_dict``). Without this, adding a
+        # new field like ``city`` would explode any caller that hands us a
+        # dict with extra columns from a future migration.
+        known = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)
 
 

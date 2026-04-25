@@ -15,13 +15,16 @@ import requests
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import CityInfo, get_city
 from .utils import (
     clean_price, clean_size, clean_rooms, detect_district,
     MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS,
     DACHGESCHOSS_KEYWORDS, AUSBAU_KEYWORDS, WBS_KEYWORDS,
 )
 
-# Hamburg center coordinates (Rathaus)
+# Hamburg center coordinates (Rathaus). Kept as module-level constants
+# for backward compat with any external imports; the active value used
+# inside the scraper now comes from ``city_registry.get_city(...)``.
 HAMBURG_LAT = 53.5511
 HAMBURG_LNG = 9.9937
 HAMBURG_RADIUS_KM = 20
@@ -51,10 +54,15 @@ class ImmoScoutScraper(BaseScraper):
             "apartmentbuy",
         )
 
+        # CITY-SUPPORT-1: per-city radius search. Defaults to Hamburg if
+        # an unknown city slipped through validation.
+        city = self._city_for(criteria)
+        lat, lng, radius = city.geocode_radius
+
         params = {
             "searchType": "radius",
             "realestatetype": prop_type,
-            "geocoordinates": f"{HAMBURG_LAT};{HAMBURG_LNG};{HAMBURG_RADIUS_KM}",
+            "geocoordinates": f"{lat};{lng};{int(radius)}",
             "pagesize": "20",
             "pagenumber": str(page),
         }
@@ -81,6 +89,7 @@ class ImmoScoutScraper(BaseScraper):
         all_listings: list[Listing] = []
         seen_ids: set[str] = set()
         is_mfh = "multi_family" in criteria.property_types
+        city = self._city_for(criteria)
 
         for page in range(1, max_pages + 1):
             url = self.build_search_url(criteria, page)
@@ -108,7 +117,7 @@ class ImmoScoutScraper(BaseScraper):
                 if item.get("type") != "EXPOSE_RESULT":
                     continue
 
-                listing = self._parse_api_item(item.get("item", {}))
+                listing = self._parse_api_item(item.get("item", {}), city)
                 if not listing or listing.id in seen_ids:
                     continue
 
@@ -134,10 +143,31 @@ class ImmoScoutScraper(BaseScraper):
         self.logger.info(f"immoscout: Found {len(all_listings)} listings via mobile API")
         return all_listings
 
-    def _parse_api_item(self, item: dict) -> Listing | None:
-        """Parse a single result from the mobile API response."""
+    def _city_for(self, criteria: UserCriteria) -> CityInfo:
+        """Resolve the CityInfo for criteria, falling back to Hamburg.
+
+        Defaults exist so tests/scripts that build a bare ``UserCriteria()``
+        without a city still get the original Hamburg behaviour.
+        """
+        try:
+            return get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+        except ValueError:
+            self.logger.warning(
+                "unknown city %r on criteria — falling back to hamburg",
+                getattr(criteria, "city", None),
+            )
+            return get_city("hamburg")
+
+    def _parse_api_item(self, item: dict, city: CityInfo | None = None) -> Listing | None:
+        """Parse a single result from the mobile API response.
+
+        ``city`` defaults to Hamburg so existing tests that call this
+        helper with a single arg keep working.
+        """
         if not item:
             return None
+        if city is None:
+            city = get_city("hamburg")
 
         listing_id = f"immoscout_{item.get('id', '')}"
         title = item.get("title", "")
@@ -165,30 +195,33 @@ class ImmoScoutScraper(BaseScraper):
         address = addr_data.get("line", "")
         zip_code = addr_data.get("postcode", "")
 
-        # Filter: must be Hamburg area (not surrounding cities)
+        # CITY-SUPPORT-1: filter to in-city listings using the city's
+        # postal-code ranges and address-token allowlist. The radius search
+        # pulls in suburbs whose zip prefix overlaps neighbouring towns,
+        # so we need the post-fetch filter regardless of which city we're
+        # targeting.
         addr_lower = address.lower()
-        if "hamburg" not in addr_lower:
-            # Surrounding cities that share zip prefixes with Hamburg
-            non_hamburg = [
-                "norderstedt", "seevetal", "reinbek", "pinneberg",
-                "ahrensburg", "schenefeld", "wedel", "glinde",
-                "barsbüttel", "oststeinbek", "halstenbek", "rellingen",
-                "tangstedt", "henstedt", "quickborn", "elmshorn",
-                "geesthacht", "lauenburg", "wentorf", "aumühle",
-                "börnsen", "escheburg", "stelle", "winsen",
-            ]
-            if any(city in addr_lower for city in non_hamburg):
+        # Fast path: if any city-name token appears in the address, accept
+        # (matches old Hamburg behaviour). Otherwise demand a zip in range.
+        city_name_in_addr = any(tok in addr_lower for tok in city.address_tokens)
+        if not city_name_in_addr:
+            # Excluded suburb names (Hamburg shares zip prefixes with
+            # several Schleswig-Holstein/Niedersachsen towns).
+            if any(tok in addr_lower for tok in city.exclude_address_tokens):
                 return None
-            # Also check zip code is valid Hamburg range
+            # Zip must fall in one of the registered ranges.
             if zip_code:
                 try:
                     z = int(zip_code)
-                    # Hamburg PLZ: 20038-22769 + 21029-21149 (Bergedorf/Harburg)
-                    is_hamburg = (20038 <= z <= 22769) or (21029 <= z <= 21149)
-                    if not is_hamburg:
+                    in_range = any(low <= z <= hi for low, hi in city.zip_ranges)
+                    if not in_range:
                         return None
                 except ValueError:
                     pass
+            # No zip + no city-name match: drop. Listings without either
+            # are too risky to keep when we're city-filtering.
+            elif city.zip_ranges:
+                return None
 
         # Energy rating
         energy = item.get("energyEfficiencyClass")

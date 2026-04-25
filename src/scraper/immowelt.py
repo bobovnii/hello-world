@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import get_city
 from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
@@ -41,7 +42,15 @@ class ImmoweltScraper(BaseScraper):
         if page > 1:
             params.append(f"sp={page}")
 
-        base = f"{self.BASE_URL}/liste/hamburg/{prop_path}/kaufen"
+        # CITY-SUPPORT-1: per-city path slug. Falls back to Hamburg if
+        # the criteria doesn't carry a known city.
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+            city_path = city.immowelt_path
+        except ValueError:
+            city_path = "hamburg"
+
+        base = f"{self.BASE_URL}/liste/{city_path}/{prop_path}/kaufen"
         if params:
             return f"{base}?{'&'.join(params)}"
         return base

@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import get_city
 from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
@@ -16,8 +17,17 @@ class OhneMaklerScraper(BaseScraper):
     BASE_URL = "https://www.ohne-makler.net"
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
-        # Ohne-Makler uses a single page per city, no server-side filters
-        base = f"{self.BASE_URL}/immobilien/hamburg/hamburg/"
+        # Ohne-Makler uses a single page per city, no server-side filters.
+        # CITY-SUPPORT-1: per-city path. ``ohne_makler_path`` already
+        # contains any required Bundesland prefix (e.g. for Heide it is
+        # ``"schleswig-holstein/heide"``).
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+            path = city.ohne_makler_path
+        except ValueError:
+            path = "hamburg/hamburg"
+
+        base = f"{self.BASE_URL}/immobilien/{path}/"
         if page > 1:
             base = f"{base}?page={page}"
         return base

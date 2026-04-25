@@ -124,7 +124,16 @@ class BaseScraper(ABC):
             if listing.rooms < criteria.min_rooms:
                 return False
         # District filter
-        if criteria.districts and listing.district:
+        # CITY-SUPPORT-1: ``detect_district`` is Hamburg-only — every
+        # non-Hamburg listing currently gets labelled "Hamburg" as the
+        # fallback. Applying the YAML district filter against that
+        # would drop every Berlin/Dresden/Heide listing. Until the
+        # generalised district detector lands, skip the filter when the
+        # criteria targets a non-Hamburg city. This is documented as an
+        # expected gap in ``city_registry.py`` and the architect's plan
+        # will address it properly.
+        is_hamburg_search = (getattr(criteria, "city", "hamburg") or "hamburg").lower() == "hamburg"
+        if is_hamburg_search and criteria.districts and listing.district:
             if listing.district not in criteria.districts:
                 return False
         return True

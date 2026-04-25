@@ -131,6 +131,119 @@ class TestSearchURLBuilding:
         assert "pagenumber=2" in url_p2
 
 
+class TestCityAwareSearchURLs:
+    """CITY-SUPPORT-1: each scraper must honour ``criteria.city``.
+
+    Pure URL-construction tests — no network. The Hamburg-default
+    regressions live in ``TestSearchURLBuilding`` above; here we just
+    prove that switching cities flips the right tokens in the URL.
+    """
+
+    # ------------------------------------------------------------------
+    # immowelt
+    # ------------------------------------------------------------------
+    def test_immowelt_berlin(self):
+        scraper = ImmoweltScraper()
+        criteria = UserCriteria(city="berlin", budget_max=300000)
+        url = scraper.build_search_url(criteria)
+        assert "/berlin/" in url
+        assert "/hamburg/" not in url
+
+    def test_immowelt_dresden(self):
+        scraper = ImmoweltScraper()
+        url = scraper.build_search_url(UserCriteria(city="dresden"))
+        assert "/dresden/" in url
+
+    def test_immowelt_heide(self):
+        scraper = ImmoweltScraper()
+        url = scraper.build_search_url(UserCriteria(city="heide"))
+        assert "/heide/" in url
+
+    def test_immowelt_default_is_hamburg(self):
+        """Bare UserCriteria() must keep the legacy Hamburg URL shape."""
+        scraper = ImmoweltScraper()
+        url = scraper.build_search_url(UserCriteria())
+        assert "/hamburg/" in url
+
+    # ------------------------------------------------------------------
+    # kleinanzeigen
+    # ------------------------------------------------------------------
+    def test_kleinanzeigen_berlin(self):
+        scraper = KleinanzeigenScraper()
+        url = scraper.build_search_url(UserCriteria(city="berlin"))
+        assert "/berlin/" in url
+        assert "l3331" in url
+        assert "l9409" not in url
+
+    def test_kleinanzeigen_dresden(self):
+        scraper = KleinanzeigenScraper()
+        url = scraper.build_search_url(UserCriteria(city="dresden"))
+        assert "/dresden/" in url
+        assert "l4030" in url
+
+    def test_kleinanzeigen_heide(self):
+        scraper = KleinanzeigenScraper()
+        url = scraper.build_search_url(UserCriteria(city="heide"))
+        assert "/heide/" in url
+        assert "l1814" in url
+
+    def test_kleinanzeigen_default_is_hamburg(self):
+        scraper = KleinanzeigenScraper()
+        url = scraper.build_search_url(UserCriteria())
+        assert "/hamburg/" in url
+        assert "l9409" in url
+
+    # ------------------------------------------------------------------
+    # ohne-makler
+    # ------------------------------------------------------------------
+    def test_ohne_makler_berlin(self):
+        scraper = OhneMaklerScraper()
+        url = scraper.build_search_url(UserCriteria(city="berlin"))
+        assert "/berlin/berlin/" in url
+
+    def test_ohne_makler_dresden(self):
+        scraper = OhneMaklerScraper()
+        url = scraper.build_search_url(UserCriteria(city="dresden"))
+        assert "/sachsen/dresden/" in url
+
+    def test_ohne_makler_heide_uses_bundesland_path(self):
+        scraper = OhneMaklerScraper()
+        url = scraper.build_search_url(UserCriteria(city="heide"))
+        assert "/schleswig-holstein/heide/" in url
+
+    def test_ohne_makler_default_is_hamburg(self):
+        scraper = OhneMaklerScraper()
+        url = scraper.build_search_url(UserCriteria())
+        assert "/hamburg/hamburg/" in url
+
+    # ------------------------------------------------------------------
+    # immoscout (mobile API, geocoordinates differ per city)
+    # ------------------------------------------------------------------
+    def test_immoscout_berlin_geocoords(self):
+        """Berlin URL must carry Berlin coordinates, not Hamburg's."""
+        scraper = ImmoScoutScraper()
+        url = scraper.build_search_url(UserCriteria(city="berlin"))
+        # Berlin centre lat starts with 52.; Hamburg's with 53.
+        assert "geocoordinates=52." in url
+        assert "geocoordinates=53." not in url
+
+    def test_immoscout_dresden_geocoords(self):
+        scraper = ImmoScoutScraper()
+        url = scraper.build_search_url(UserCriteria(city="dresden"))
+        assert "geocoordinates=51." in url
+
+    def test_immoscout_heide_geocoords(self):
+        scraper = ImmoScoutScraper()
+        url = scraper.build_search_url(UserCriteria(city="heide"))
+        # Heide centre lat ~54.19
+        assert "geocoordinates=54." in url
+
+    def test_immoscout_default_is_hamburg(self):
+        scraper = ImmoScoutScraper()
+        url = scraper.build_search_url(UserCriteria())
+        assert "geocoordinates=53.5511" in url
+
+
 class TestKeywordLists:
     """Verify canonical keyword lists are properly defined and non-empty."""
 

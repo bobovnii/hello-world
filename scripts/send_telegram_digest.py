@@ -128,6 +128,9 @@ def search_to_criteria(s: dict[str, Any]) -> UserCriteria:
         interest_rate_pct=float(s.get("interest_rate_pct", 3.5)),
         loan_term_years=int(s.get("loan_term_years", 25)),
         risk_tolerance=s.get("risk_tolerance", "moderate"),
+        # CITY-SUPPORT-1: lowercase slug matched against city_registry.
+        # Default "hamburg" preserves existing single-city behaviour.
+        city=str(s.get("city", "hamburg")).lower().strip(),
     )
 
 
