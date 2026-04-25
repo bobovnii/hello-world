@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import yaml  # type: ignore[import-untyped]
 
-from src.analyzer.market_data import HamburgMarketData
+from src.analyzer.market_data import CityMarketData
+from src.analyzer.market_registry import MarketRegistry
 from src.analyzer.scorer import DealScorer
 from src.database.db import Database
 from src.database.models import Listing, UserCriteria
@@ -110,6 +111,20 @@ def load_config(path: Path) -> dict[str, Any]:
             raise SystemExit(
                 f"search '{s['slug']}' risk_tolerance={rt} not in {_VALID_RISK}"
             )
+        # Optional thesis: short investor note rendered in the header.
+        # When present must be a non-empty string ≤200 chars so we don't
+        # inflate the header card with unbounded prose.
+        if "thesis" in s and s["thesis"] is not None:
+            thesis = s["thesis"]
+            if not isinstance(thesis, str) or not thesis.strip():
+                raise SystemExit(
+                    f"search '{s['slug']}' thesis must be a non-empty string"
+                )
+            if len(thesis) > 200:
+                raise SystemExit(
+                    f"search '{s['slug']}' thesis exceeds 200 chars "
+                    f"(got {len(thesis)})"
+                )
 
     cfg["_bot_token"] = token
     return cfg
@@ -193,15 +208,38 @@ def _flags(listing: Listing) -> list[str]:
 
 
 def format_header(search: dict[str, Any], count: int, status: str) -> str:
-    """Header message sent once per search before the individual deal cards."""
+    """Header message sent once per search before the individual deal cards.
+
+    Renders an optional ``🧭 Thesis: ...`` line between the search name
+    and the deal count when ``search["thesis"]`` is set. The line lets
+    the operator remind themselves *why* this search exists when a card
+    pops up — useful for the multi-city digest where Lichtenberg vs
+    Klotzsche vs Heide each rest on a different macro story.
+    """
     name = search["name"]
+    thesis = search.get("thesis")
+    if thesis:
+        # Escape Markdown specials so user-authored thesis text can't
+        # break parse_mode=MARKDOWN (e.g. an unbalanced `*` or `_`).
+        safe_thesis = (
+            thesis.replace("\\", "\\\\")
+            .replace("_", r"\_")
+            .replace("*", r"\*")
+            .replace("[", r"\[")
+            .replace("`", r"\`")
+        )
+        thesis_line = f"\n🧭 Thesis: {safe_thesis}"
+    else:
+        thesis_line = ""
     if count == 0:
         return (
-            f"🏠 *{name}*\n\n"
+            f"🏠 *{name}*"
+            f"{thesis_line}\n\n"
             f"_No new deals today._ ({status})"
         )
     return (
-        f"🏠 *{name}*\n"
+        f"🏠 *{name}*"
+        f"{thesis_line}\n"
         f"*{count}* new deal{'s' if count != 1 else ''} today."
     )
 
@@ -272,8 +310,51 @@ def _baujahr_energie_line(listing: Listing) -> str | None:
     return "🏗️ " + " · ".join(parts)
 
 
-def format_deal(listing: Listing, analysis) -> str:
-    """One message per deal, Telegram MarkdownV1 (legacy) style."""
+def _guess_district_from_address(listing: Listing, city: CityMarketData | None) -> str:
+    """Best-effort: substring-match the city's known districts in the address.
+
+    Returns the matched district name, or the city's display name when no
+    district token appears. Empty / None inputs fall back to ``""`` so
+    the caller can decide on a final fallback. Pure stop-gap for the
+    visible label until the real district resolver lands.
+
+    Special case: ``detect_district()`` in ``src/scraper/utils.py`` is
+    Hamburg-only and returns Hamburg-shaped district names ("Hamburg",
+    "Hamburg-Mitte", ...) for any listing whose zip wasn't recognised.
+    When the *current* city isn't Hamburg, those labels are actively
+    misleading on the digest card, so we discard them and try the
+    address fallback instead.
+    """
+    if city is None:
+        return listing.district or ""
+
+    listing_district = (listing.district or "").strip()
+    is_hamburg_shaped_label = (
+        listing_district == "Hamburg"
+        or listing_district.startswith("Hamburg-")
+    )
+    if listing_district and not (
+        is_hamburg_shaped_label and city.slug != "hamburg"
+    ):
+        return listing_district
+
+    addr = (listing.address or "").lower()
+    if addr:
+        for d in city.districts:
+            if d and d.lower() in addr:
+                return d
+    return city.display_name
+
+
+def format_deal(listing: Listing, analysis, city: CityMarketData | None = None) -> str:
+    """One message per deal, Telegram MarkdownV1 (legacy) style.
+
+    ``city`` is the per-city ``CityMarketData`` for the search this deal
+    belongs to. Used for the Bezirk header label so non-Hamburg listings
+    don't hard-code "Hamburg" when the address has no recognised district.
+    Optional for backwards compatibility with existing tests; falls back
+    to ``listing.district or "Hamburg"`` when None.
+    """
     flag_str = " · ".join(_flags(listing))
     flag_line = f"\n🚩 {flag_str}" if flag_str else ""
 
@@ -286,7 +367,10 @@ def format_deal(listing: Listing, analysis) -> str:
         sig_line = "\n💡 " + " · ".join(short)
 
     cf_sign = "+" if analysis.monthly_cashflow >= 0 else ""
-    district = listing.district or "Hamburg"
+    if city is not None:
+        district = _guess_district_from_address(listing, city)
+    else:
+        district = listing.district or "Hamburg"
 
     # Limit title to one line
     title = (listing.title or "")[:90]
@@ -425,8 +509,11 @@ async def main_async(args) -> int:
     skip_seen = bool(cfg.get("output", {}).get("skip_seen", True))
 
     db = Database()
-    market = HamburgMarketData()
-    scorer = DealScorer(market)
+    # MULTI-CITY-A: instantiate a registry once, then resolve per-search.
+    # The previous code constructed a single Hamburg ``MarketData`` and
+    # reused it for every search, which silently benchmarked Berlin /
+    # Dresden / Heide listings against Hamburg averages.
+    registry = MarketRegistry()
 
     total_sent = 0
     total_searches_ok = 0
@@ -435,6 +522,13 @@ async def main_async(args) -> int:
         slug = search["slug"]
         logger.info("running search: %s", slug)
         criteria = search_to_criteria(search)
+
+        try:
+            city_market = registry.get(criteria.city)
+        except ValueError as e:
+            logger.error("%s: %s", slug, e)
+            continue
+        scorer = DealScorer(city_market)
 
         try:
             listings, status_lines = run_search(criteria, args.max_pages)
@@ -466,7 +560,7 @@ async def main_async(args) -> int:
         # Build messages
         messages = [format_header(search, len(top), status)]
         for listing, analysis in top:
-            messages.append(format_deal(listing, analysis))
+            messages.append(format_deal(listing, analysis, city_market))
 
         sent = await send_messages(token, channel, messages, args.dry_run)
         total_sent += sent
@@ -481,7 +575,7 @@ async def main_async(args) -> int:
         if top:
             today = datetime.now().strftime("%Y%m%d")
             safe_slug = slug.replace("_", "-")  # underscores trigger _italic_
-            filename = f"hamburg_deals_{slug}_{today}.html"
+            filename = f"{city_market.slug}_deals_{slug}_{today}.html"
             caption_name = (
                 search["name"]
                 .replace("_", r"\_")
@@ -494,6 +588,7 @@ async def main_async(args) -> int:
                 search_name=search["name"],
                 search_slug=safe_slug,
                 deals=top,
+                city_display_name=city_market.display_name,
             )
             await send_document(
                 token, channel, html_doc, filename, caption, args.dry_run
@@ -521,7 +616,7 @@ async def main_async(args) -> int:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Send Hamburg real estate digest to Telegram")
+    ap = argparse.ArgumentParser(description="Send German real estate digest to Telegram")
     ap.add_argument("--config", default="config/searches.yaml", help="Path to searches YAML")
     ap.add_argument("--dry-run", action="store_true", help="Print messages, do not send or mark seen")
     ap.add_argument("--max-pages", type=int, default=3, help="Max pages per scraper per search")

@@ -1,0 +1,36 @@
+{
+  "slug": "dresden",
+  "display_name": "Dresden",
+  "bundesland": "Sachsen",
+  "city": "Dresden",
+  "data_year": 2025,
+  "currency": "EUR",
+  "city_default_price_sqm": 2700,
+  "city_default_rent_sqm": 9.5,
+  "city_default_yield": 4.5,
+  "districts": {
+    "Klotzsche": {
+      "avg_price_sqm_buy": 3300,
+      "avg_rent_sqm_month": 9.5,
+      "avg_gross_yield_pct": 4.5,
+      "trend": "rising",
+      "source": "TSMC fab thesis + Hypofriend Dresden Q1 2025",
+      "as_of_year": 2025
+    },
+    "Blasewitz": {
+      "avg_price_sqm_buy": 4000,
+      "avg_rent_sqm_month": 11.0,
+      "avg_gross_yield_pct": 4.2,
+      "trend": "stable",
+      "source": "Hypofriend Dresden Q1 2025",
+      "as_of_year": 2025
+    }
+  },
+  "purchase_costs_pct": {
+    "grunderwerbsteuer": 5.5,
+    "notar": 1.5,
+    "grundbuch": 0.5,
+    "makler": 3.57
+  },
+  "notes": "Conservative seed values. Tune via scripts/update_city.py."
+}

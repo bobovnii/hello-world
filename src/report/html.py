@@ -186,10 +186,20 @@ def _render_kv(rows: list[tuple[str, str]]) -> str:
     return f'<div class="kv-grid">{items}</div>'
 
 
-def _render_deal(listing: Listing, analysis: AnalysisResult) -> str:
-    """Render a single deal section. All inputs are escaped here."""
+def _render_deal(
+    listing: Listing,
+    analysis: AnalysisResult,
+    city_display_name: str = "Hamburg",
+) -> str:
+    """Render a single deal section. All inputs are escaped here.
+
+    ``city_display_name`` is the human-readable name of the search's
+    city (Hamburg / Berlin / Dresden / Heide). Used as the fallback
+    label when ``listing.district`` is empty so non-Hamburg cards don't
+    silently say "Hamburg" anymore.
+    """
     title = _esc(listing.title or "(ohne Titel)")
-    district = _esc(listing.district or "Hamburg")
+    district = _esc(listing.district or city_display_name)
     address = _esc(listing.address) if listing.address else ""
 
     safe_url = _safe_url(listing.url)
@@ -375,6 +385,7 @@ def build_digest_html(
     search_slug: str,
     deals: list[tuple[Listing, AnalysisResult]],
     generated_at: datetime | None = None,
+    city_display_name: str = "Hamburg",
 ) -> str:
     """Render the full HTML detail report for one search.
 
@@ -394,6 +405,11 @@ def build_digest_html(
     generated_at:
         Timestamp shown in the header. Defaults to ``datetime.now()``.
         Inject for deterministic tests.
+    city_display_name:
+        Human-readable city name (Hamburg / Berlin / Dresden / Heide).
+        Used as the fallback Bezirk label when ``listing.district`` is
+        empty AND in the document title. Defaults to "Hamburg" so
+        existing single-city callers keep working.
 
     Returns
     -------
@@ -405,14 +421,16 @@ def build_digest_html(
         generated_at = datetime.now()
 
     if deals:
-        body_inner = "".join(_render_deal(l, a) for l, a in deals)
+        body_inner = "".join(
+            _render_deal(l, a, city_display_name=city_display_name) for l, a in deals
+        )
     else:
         body_inner = (
             "<div class='empty'>Keine Deals für diesen Suchlauf — "
             "der Bericht enthält daher keine Details.</div>"
         )
 
-    title_text = f"Hamburg Deal-Report — {search_name}"
+    title_text = f"{city_display_name} Deal-Report — {search_name}"
     return (
         "<!DOCTYPE html>"
         '<html lang="de">'

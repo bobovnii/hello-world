@@ -1,0 +1,28 @@
+{
+  "slug": "heide",
+  "display_name": "Heide",
+  "bundesland": "Schleswig-Holstein",
+  "city": "Heide",
+  "data_year": 2025,
+  "currency": "EUR",
+  "city_default_price_sqm": 2100,
+  "city_default_rent_sqm": 7.5,
+  "city_default_yield": 5.5,
+  "districts": {
+    "Heide": {
+      "avg_price_sqm_buy": 2100,
+      "avg_rent_sqm_month": 7.5,
+      "avg_gross_yield_pct": 5.5,
+      "trend": "rising",
+      "source": "Hypofriend SH 2025 + Lyten thesis",
+      "as_of_year": 2025
+    }
+  },
+  "purchase_costs_pct": {
+    "grunderwerbsteuer": 6.5,
+    "notar": 1.5,
+    "grundbuch": 0.5,
+    "makler": 3.57
+  },
+  "notes": "Conservative seed values. Tune via scripts/update_city.py."
+}

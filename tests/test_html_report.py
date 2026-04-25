@@ -280,6 +280,45 @@ class TestGesamtkostenRow:
         assert "355,000" in html_out
 
 
+class TestCityDisplayName:
+    """MULTI-CITY-A: HTML title and missing-district fallback respect the
+    city display name instead of hard-coding "Hamburg"."""
+
+    def test_title_uses_city_display_name(self):
+        html_out = build_digest_html(
+            search_name="Demo Suche",
+            search_slug="demo",
+            deals=[],
+            generated_at=datetime(2026, 4, 25, 8, 0),
+            city_display_name="Berlin",
+        )
+        assert "<title>Berlin Deal-Report" in html_out
+        assert "Hamburg" not in html_out
+
+    def test_default_title_is_hamburg(self):
+        # Backwards compat: caller that doesn't pass city_display_name
+        # still produces the legacy "Hamburg Deal-Report" title.
+        html_out = build_digest_html(
+            search_name="Demo",
+            search_slug="demo",
+            deals=[],
+            generated_at=datetime(2026, 4, 25, 8, 0),
+        )
+        assert "Hamburg Deal-Report" in html_out
+
+    def test_missing_district_uses_city_display_name(self):
+        listing = _listing(district="")  # empty district
+        html_out = build_digest_html(
+            search_name="Demo",
+            search_slug="demo",
+            deals=[(listing, _analysis())],
+            generated_at=datetime(2026, 4, 25, 8, 0),
+            city_display_name="Heide",
+        )
+        # "Heide" appears as the deal's district label.
+        assert "Heide" in html_out
+
+
 class TestSortPreservedByCaller:
     def test_deals_sorted_by_score_desc(self):
         low = (

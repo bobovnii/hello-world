@@ -17,7 +17,13 @@ import pytest
 # scripts/ is not a package; resolve it the same way the script itself does.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.send_telegram_digest import _time_on_market_line, format_deal
+from scripts.send_telegram_digest import (
+    _guess_district_from_address,
+    _time_on_market_line,
+    format_deal,
+    format_header,
+)
+from src.analyzer.market_registry import MarketRegistry
 from src.database.models import AnalysisResult, Listing
 
 
@@ -187,6 +193,86 @@ class TestBaujahrEnergieLine:
         msg = format_deal(_l(year_built=None, energy_rating=None), _a())
         assert "🏗️" not in msg
         assert "BJ None" not in msg
+
+
+class TestGuessDistrictFromAddress:
+    """MULTI-CITY-A: bogus 'Hamburg' / 'Hamburg-X' district labels coming
+    from the Hamburg-only detect_district() must be dropped on non-Hamburg
+    listings so the card doesn't print "Hamburg" for a Heide deal."""
+
+    def test_drops_bogus_hamburg_label_for_heide(self):
+        heide = MarketRegistry().get("heide")
+        listing = Listing(
+            id="x", platform="im", url="", title="t",
+            price=100000, size_sqm=80, rooms=3,
+            district="Hamburg",  # bogus
+            address="",
+        )
+        assert _guess_district_from_address(listing, heide) == "Heide"
+
+    def test_drops_bogus_hamburg_mitte_label_for_berlin(self):
+        berlin = MarketRegistry().get("berlin")
+        listing = Listing(
+            id="y", platform="im", url="", title="t",
+            price=400000, size_sqm=70, rooms=2,
+            district="Hamburg-Mitte",  # bogus on Berlin listing
+            address="",
+        )
+        assert _guess_district_from_address(listing, berlin) == "Berlin"
+
+    def test_address_match_finds_district(self):
+        berlin = MarketRegistry().get("berlin")
+        listing = Listing(
+            id="z", platform="im", url="", title="t",
+            price=400000, size_sqm=70, rooms=2,
+            district="",
+            address="Karlshorster Str 5, 10318 Lichtenberg, Berlin",
+        )
+        assert _guess_district_from_address(listing, berlin) == "Lichtenberg"
+
+    def test_hamburg_district_passthrough(self):
+        hamburg = MarketRegistry().get("hamburg")
+        listing = Listing(
+            id="w", platform="im", url="", title="t",
+            price=200000, size_sqm=60, rooms=2,
+            district="Harburg",
+            address="",
+        )
+        assert _guess_district_from_address(listing, hamburg) == "Harburg"
+
+
+class TestHeaderThesis:
+    """MULTI-CITY-A: optional `thesis` line renders in the header."""
+
+    def test_thesis_renders_when_present(self):
+        search = {
+            "name": "3-Zimmer Klotzsche (TSMC) <320k",
+            "thesis": "TSMC fab opens 2027; +5–8% workforce shock",
+        }
+        msg = format_header(search, count=2, status="immoscout=10")
+        assert "🧭 Thesis: TSMC fab opens 2027" in msg
+        assert "*2* new deals today." in msg
+
+    def test_no_thesis_omits_line(self):
+        search = {"name": "2-Zimmer bei DESY <250k"}
+        msg = format_header(search, count=3, status="immoscout=5")
+        assert "🧭" not in msg
+        assert "Thesis" not in msg
+
+    def test_thesis_renders_even_when_zero_deals(self):
+        search = {
+            "name": "Heide 3-Zimmer (Lyten)",
+            "thesis": "Lyten gigafactory 2028; 5% workforce shock",
+        }
+        msg = format_header(search, count=0, status="immoscout=0")
+        assert "🧭 Thesis: Lyten gigafactory" in msg
+        assert "No new deals today." in msg
+
+    def test_empty_thesis_string_does_not_render(self):
+        # YAML may parse "" as empty string. Treat as absent.
+        search = {"name": "X", "thesis": ""}
+        msg = format_header(search, count=1, status="x=1")
+        assert "🧭" not in msg
 
 
 class TestSubScoreSparkline:

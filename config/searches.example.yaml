@@ -30,9 +30,16 @@ output:
 
 
 # List of saved searches. Each one runs independently and posts its own section.
+#
+# Optional fields:
+#   - city: lowercase city slug (default "hamburg"). Must match an entry
+#     in src/scraper/city_registry.py and a JSON in data/cities/.
+#   - thesis: short investor note (≤200 chars) rendered in the digest
+#     header. Use it to remind yourself why the search exists.
 searches:
   - slug: desy_2room_250k
     name: "2-Zimmer bei DESY <250k"
+    # thesis: "DESY/XFEL spillover; Bahrenfeld/Lurup pricing 25% below Eppendorf"
     budget_min: 50000
     budget_max: 250000
     min_rooms: 2
