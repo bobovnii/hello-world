@@ -306,11 +306,23 @@ class Database:
     # Listings
     # ------------------------------------------------------------------
     def save_listing(self, listing: Listing) -> bool:
-        """Save or update a listing. Returns True if new, False if updated."""
+        """Save or update a listing. Returns True if new, False if updated.
+
+        ``first_seen_at`` semantics (see ``Listing.days_on_market``):
+        - On INSERT, populate ``first_seen_at`` with ``datetime.now()`` here
+          rather than trusting the dataclass default. The default is the
+          empty string, set deliberately so the DB owns the canonical
+          first-seen timestamp.
+        - On UPDATE, EXCLUDE ``first_seen_at`` from the SET clause so the
+          original first-seen timestamp survives every re-scrape. Without
+          this, ``scraped_at``-style refresh on every visit would wipe out
+          time-on-market.
+        """
         d = listing.to_dict()
-        cols = ", ".join(d.keys())
-        placeholders = ", ".join(["?"] * len(d))
-        updates = ", ".join(f"{k} = ?" for k in d.keys() if k != "id")
+        # On UPDATE we never overwrite first_seen_at — only the row's
+        # original INSERT gets to set it.
+        update_cols = [k for k in d.keys() if k not in ("id", "first_seen_at")]
+        updates = ", ".join(f"{k} = ?" for k in update_cols)
 
         conn = self._conn()
         # Multi-statement write: SELECT-then-(INSERT|UPDATE). Lock so a
@@ -321,11 +333,17 @@ class Database:
                 "SELECT id FROM listings WHERE id = ?", (listing.id,)
             ).fetchone()
             if existing:
-                vals = [v for k, v in d.items() if k != "id"] + [listing.id]
+                vals = [d[k] for k in update_cols] + [listing.id]
                 conn.execute(
                     f"UPDATE listings SET {updates} WHERE id = ?", vals
                 )
             else:
+                # Stamp first_seen_at at INSERT time. We don't trust the
+                # dataclass default ('') because the whole point of this
+                # column is "DB-controlled, never silently empty".
+                d["first_seen_at"] = datetime.now().isoformat()
+                cols = ", ".join(d.keys())
+                placeholders = ", ".join(["?"] * len(d))
                 conn.execute(
                     f"INSERT INTO listings ({cols}) VALUES ({placeholders})",
                     list(d.values()),

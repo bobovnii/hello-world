@@ -4,9 +4,10 @@ import os
 import sqlite3
 import tempfile
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -709,5 +710,384 @@ class TestThreadSafety:
             for t in threads:
                 t.join()
             assert all(r == "wal" for r in results), results
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# first_seen_at / time-on-market (migration 003)
+# ---------------------------------------------------------------------------
+
+
+class TestFirstSeenAt:
+    """Migration 003 + save_listing INSERT/UPDATE behaviour + days_on_market.
+
+    Design rules being verified:
+    - Migration 003 adds the column and bumps user_version to >= 3.
+    - Pre-existing rows are backfilled from scraped_at (so they don't all
+      read as "0 days on market" right after migration).
+    - INSERT stamps first_seen_at server-side (not via dataclass default).
+    - UPDATE never overwrites first_seen_at — original timestamp survives
+      every re-scrape.
+    - days_on_market clamps empty/malformed/future timestamps to 0.
+    """
+
+    def test_migration_003_adds_first_seen_at_column(self, db_path):
+        """Fresh DB ends with first_seen_at on listings + user_version >= 3."""
+        db = Database(db_path=db_path)
+        try:
+            cols = {
+                r[1]
+                for r in db.conn.execute("PRAGMA table_info(listings)").fetchall()
+            }
+            assert "first_seen_at" in cols
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version >= 3
+        finally:
+            db.close()
+
+    def test_migration_003_backfills_existing_rows(self, db_path):
+        """A pre-migration-003 DB row gets first_seen_at = scraped_at."""
+        # Seed a DB at user_version=2 (i.e. with 002_seen_deals applied but
+        # NOT 003_listings_first_seen_at) and a listing row that lacks
+        # first_seen_at. Database() must run migration 003 and backfill.
+        conn = sqlite3.connect(db_path)
+        try:
+            # Match the pre-003 listings shape (no first_seen_at column).
+            conn.executescript(
+                """
+                CREATE TABLE listings (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    size_sqm REAL NOT NULL,
+                    rooms REAL NOT NULL,
+                    address TEXT DEFAULT '',
+                    district TEXT DEFAULT '',
+                    zip_code TEXT DEFAULT '',
+                    year_built INTEGER,
+                    property_type TEXT DEFAULT 'apartment',
+                    condition TEXT,
+                    floor INTEGER,
+                    hausgeld REAL,
+                    nebenkosten REAL,
+                    energy_rating TEXT,
+                    balcony INTEGER DEFAULT 0,
+                    garden INTEGER DEFAULT 0,
+                    parking INTEGER DEFAULT 0,
+                    listing_date TEXT,
+                    description TEXT,
+                    scraped_at TEXT NOT NULL,
+                    image_urls TEXT DEFAULT '[]',
+                    is_erbbaurecht INTEGER DEFAULT 0,
+                    is_rented INTEGER DEFAULT 0,
+                    current_rent_monthly REAL,
+                    is_wbs INTEGER DEFAULT 0,
+                    sonderumlage REAL,
+                    num_units_in_building INTEGER,
+                    is_dachgeschoss INTEGER DEFAULT 0,
+                    is_ausbau_needed INTEGER DEFAULT 0,
+                    total_floors INTEGER,
+                    plot_size_sqm REAL
+                );
+                CREATE TABLE analysis_results (
+                    listing_id TEXT PRIMARY KEY,
+                    deal_score REAL,
+                    FOREIGN KEY (listing_id) REFERENCES listings(id)
+                );
+                CREATE TABLE user_criteria (
+                    chat_id INTEGER PRIMARY KEY,
+                    budget_min REAL DEFAULT 0
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO listings (id, platform, url, title, price, "
+                "size_sqm, rooms, scraped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "old_1",
+                    "immoscout",
+                    "https://example.com/old",
+                    "Old Listing",
+                    250000.0,
+                    65.0,
+                    3.0,
+                    "2026-04-01T08:00:00",
+                ),
+            )
+            # Pretend 001 + 002 already ran so the migrator only applies 003+.
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        db = Database(db_path=db_path)
+        try:
+            row = db.conn.execute(
+                "SELECT first_seen_at, scraped_at FROM listings WHERE id = ?",
+                ("old_1",),
+            ).fetchone()
+            assert row is not None
+            assert row["first_seen_at"] == "2026-04-01T08:00:00"
+            # Backfill must not touch scraped_at.
+            assert row["scraped_at"] == "2026-04-01T08:00:00"
+        finally:
+            db.close()
+
+    def test_insert_sets_first_seen_at_to_now(self, db):
+        """A brand-new listing's first_seen_at is non-empty and recent."""
+        listing = Listing(
+            id="new_insert",
+            platform="immoscout",
+            url="https://example.com/new",
+            title="Brand New",
+            price=300000,
+            size_sqm=70,
+            rooms=3,
+        )
+        before = datetime.now()
+        db.save_listing(listing)
+        after = datetime.now()
+
+        row = db.conn.execute(
+            "SELECT first_seen_at FROM listings WHERE id = ?", ("new_insert",)
+        ).fetchone()
+        assert row["first_seen_at"], "first_seen_at must be populated on INSERT"
+        stamped = datetime.fromisoformat(row["first_seen_at"])
+        # Generous window — just need to prove it's "now-ish", not the empty
+        # default and not some bogus historic value.
+        assert before - timedelta(seconds=2) <= stamped <= after + timedelta(seconds=2)
+
+    def test_update_preserves_first_seen_at(self, db):
+        """Re-saving the same listing must NOT change first_seen_at."""
+        listing = Listing(
+            id="repeat_save",
+            platform="immoscout",
+            url="https://example.com/x",
+            title="Original",
+            price=200000,
+            size_sqm=60,
+            rooms=2,
+        )
+        db.save_listing(listing)
+        original = db.conn.execute(
+            "SELECT first_seen_at FROM listings WHERE id = ?", ("repeat_save",)
+        ).fetchone()["first_seen_at"]
+        assert original  # sanity
+
+        # Make sure wall-clock time would actually move if save_listing
+        # were buggy and re-stamped on UPDATE.
+        time.sleep(0.01)
+        listing.price = 195000  # price change → triggers UPDATE path
+        # Also try to "trick" the code: hand it a different first_seen_at
+        # via the dataclass. The DB must still preserve the original.
+        listing.first_seen_at = "1999-01-01T00:00:00"
+        db.save_listing(listing)
+
+        row = db.conn.execute(
+            "SELECT price, first_seen_at FROM listings WHERE id = ?",
+            ("repeat_save",),
+        ).fetchone()
+        assert row["price"] == 195000  # update went through
+        assert row["first_seen_at"] == original, (
+            "first_seen_at must survive UPDATE no matter what the dataclass says"
+        )
+
+    def test_days_on_market_with_past_timestamp(self):
+        """Listing built with a past first_seen_at → integer days delta."""
+        five_days_ago = (datetime.now() - timedelta(days=5, hours=1)).isoformat()
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at=five_days_ago,
+        )
+        # 5 days + 1 hour rounds DOWN to 5 (timedelta.days is the floor of
+        # the day component, which is what we want for "N tage im Markt").
+        assert listing.days_on_market == 5
+
+    def test_days_on_market_empty_returns_zero(self):
+        """Empty first_seen_at is the documented sane fallback to 0."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="",
+        )
+        assert listing.days_on_market == 0
+
+    def test_days_on_market_malformed_returns_zero(self):
+        """Garbage in first_seen_at must not crash the digest."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="not-an-iso-date",
+        )
+        assert listing.days_on_market == 0
+
+    def test_days_on_market_future_returns_zero(self):
+        """Clock skew: a future first_seen_at clamps to 0, not negative."""
+        future = (datetime.now() + timedelta(days=2)).isoformat()
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at=future,
+        )
+        assert listing.days_on_market == 0
+
+    def test_listing_to_from_dict_roundtrips_first_seen_at(self):
+        """to_dict/from_dict must carry first_seen_at through unchanged."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="2026-04-15T10:00:00",
+        )
+        restored = Listing.from_dict(listing.to_dict())
+        assert restored.first_seen_at == "2026-04-15T10:00:00"
+
+    def test_days_on_market_tz_aware_does_not_crash(self):
+        """A tz-aware first_seen_at must NOT raise TypeError on subtraction.
+
+        Regression: ``datetime.fromisoformat('2026-04-01T08:00:00+00:00')``
+        returns an offset-aware datetime; subtracting from naive
+        ``datetime.now()`` raises ``TypeError``. The property must absorb
+        that — otherwise a single bad row crashes the whole digest via
+        ``_time_on_market_line()`` → ``format_deal()``.
+        """
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="",
+            title="",
+            price=100000,
+            size_sqm=50,
+            rooms=2,
+            first_seen_at="2026-04-01T08:00:00+00:00",
+        )
+        # Concrete value depends on today's date; the critical assertion
+        # is "no TypeError leaked".
+        n = listing.days_on_market
+        assert isinstance(n, int)
+        assert n >= 0
+
+    def test_migration_003_handles_null_scraped_at(self, db_path):
+        """Legacy row with NULL scraped_at must not break migration 003.
+
+        Without the COALESCE in the backfill, the NOT NULL constraint on
+        first_seen_at would fire, the migration would roll back, and
+        startup would halt. We use the empty-string fallback, which
+        ``Listing.days_on_market`` already clamps to 0.
+        """
+        # Seed a pre-003 DB (user_version=2) with a row whose scraped_at
+        # column allows NULL — emulating an even older legacy shape.
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE listings (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    size_sqm REAL NOT NULL,
+                    rooms REAL NOT NULL,
+                    address TEXT DEFAULT '',
+                    district TEXT DEFAULT '',
+                    zip_code TEXT DEFAULT '',
+                    year_built INTEGER,
+                    property_type TEXT DEFAULT 'apartment',
+                    condition TEXT,
+                    floor INTEGER,
+                    hausgeld REAL,
+                    nebenkosten REAL,
+                    energy_rating TEXT,
+                    balcony INTEGER DEFAULT 0,
+                    garden INTEGER DEFAULT 0,
+                    parking INTEGER DEFAULT 0,
+                    listing_date TEXT,
+                    description TEXT,
+                    scraped_at TEXT,
+                    image_urls TEXT DEFAULT '[]',
+                    is_erbbaurecht INTEGER DEFAULT 0,
+                    is_rented INTEGER DEFAULT 0,
+                    current_rent_monthly REAL,
+                    is_wbs INTEGER DEFAULT 0,
+                    sonderumlage REAL,
+                    num_units_in_building INTEGER,
+                    is_dachgeschoss INTEGER DEFAULT 0,
+                    is_ausbau_needed INTEGER DEFAULT 0,
+                    total_floors INTEGER,
+                    plot_size_sqm REAL
+                );
+                CREATE TABLE analysis_results (
+                    listing_id TEXT PRIMARY KEY,
+                    deal_score REAL,
+                    FOREIGN KEY (listing_id) REFERENCES listings(id)
+                );
+                CREATE TABLE user_criteria (
+                    chat_id INTEGER PRIMARY KEY,
+                    budget_min REAL DEFAULT 0
+                );
+                """
+            )
+            # Row with NULL scraped_at — the malformed-legacy case.
+            conn.execute(
+                "INSERT INTO listings (id, platform, url, title, price, "
+                "size_sqm, rooms, scraped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "null_scraped",
+                    "immoscout",
+                    "https://example.com/null",
+                    "Legacy Row",
+                    250000.0,
+                    65.0,
+                    3.0,
+                    None,
+                ),
+            )
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Migration must succeed despite the NULL.
+        db = Database(db_path=db_path)
+        try:
+            row = db.conn.execute(
+                "SELECT first_seen_at FROM listings WHERE id = ?",
+                ("null_scraped",),
+            ).fetchone()
+            assert row is not None
+            # COALESCE(NULL, '') -> '' → days_on_market clamps to 0.
+            assert row["first_seen_at"] == ""
+            # And user_version advanced past 003.
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version >= 3
         finally:
             db.close()

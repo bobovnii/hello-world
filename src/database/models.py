@@ -34,6 +34,12 @@ class Listing:
     listing_date: str | None = None
     description: str | None = None
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # First time WE scraped this listing. Empty default means "DB will fill
+    # this on INSERT" — Database.save_listing populates it explicitly so the
+    # canonical timestamp is set in one place. Re-scrapes of an existing row
+    # MUST NOT overwrite this column (see Database.save_listing's UPDATE).
+    # Distinct from scraped_at, which is refreshed on every scrape.
+    first_seen_at: str = ""
     image_urls: list[str] = field(default_factory=list)
     # Enriched fields for price justification analysis
     is_erbbaurecht: bool = False  # Leasehold land (Erbpacht) - major price reducer
@@ -52,6 +58,45 @@ class Listing:
         if self.size_sqm and self.size_sqm > 0:
             return self.price / self.size_sqm
         return 0.0
+
+    @property
+    def days_on_market(self) -> int:
+        """Whole days since we first scraped this listing.
+
+        "We first scraped" — NOT "the listing was published". The scrapers'
+        ``listing_date`` is unreliable (often relative text like "vor 3
+        Tagen"), so we report what we can defend: time since first sighting.
+
+        Empty/missing ``first_seen_at`` returns 0 — sane fallback for any
+        row that somehow slipped through without a timestamp (legacy DB
+        before backfill ran, hand-inserted test fixture, etc.). A negative
+        delta (clock skew, future timestamp) also clamps to 0.
+
+        Malformed ISO strings raise nothing here either: we treat them as
+        "unknown, fall back to 0" so the digest never crashes on a single
+        bad row. Logging that case is the caller's call; this is a pure
+        property.
+
+        Tz-aware ISO strings (e.g. ``'2026-04-01T08:00:00+00:00'``) are
+        accepted: we strip the tzinfo before subtracting from a naive
+        ``datetime.now()`` so we don't raise ``TypeError: can't subtract
+        offset-naive and offset-aware datetimes``. Treating "now" as local
+        and "first" as local-without-its-offset is fine for whole-day
+        bucketing — the worst-case error is one day in either direction,
+        which the caller's bucket boundaries already absorb.
+        """
+        if not self.first_seen_at:
+            return 0
+        try:
+            first = datetime.fromisoformat(self.first_seen_at)
+            # Strip tz so subtraction with naive datetime.now() never raises.
+            if first.tzinfo is not None:
+                first = first.replace(tzinfo=None)
+            delta = datetime.now() - first
+        except (ValueError, TypeError):
+            return 0
+        days = delta.days
+        return days if days > 0 else 0
 
     def to_dict(self) -> dict:
         d = asdict(self)

@@ -77,6 +77,9 @@ def load_config(path: Path) -> dict[str, Any]:
     channel = tg.get("channel")
     if not channel:
         raise SystemExit("config.telegram.channel is required (e.g. '@HamburgDealsDemo')")
+    # Normalise to string so the seen_deals TEXT key is stable regardless of
+    # whether YAML parsed the value as int (chat_id) or str (@handle).
+    cfg["telegram"]["channel"] = str(channel)
 
     token = os.environ.get(token_env, "")
     if not token:
@@ -197,6 +200,37 @@ def format_header(search: dict[str, Any], count: int, status: str) -> str:
     )
 
 
+def _time_on_market_line(listing: Listing) -> str:
+    """German one-liner describing days-on-market.
+
+    Honest framing: this is "time since we first scraped it", NOT "time
+    since the listing was published". The original publication date is
+    not reliably recoverable from the scrapers (often a relative phrase
+    like "vor 3 Tagen"), so we report what we can defend.
+
+    Buckets:
+    - 0 days   -> "Neu heute"
+    - 1 day    -> "1 Tag im Markt"
+    - 2..59    -> "N Tage im Markt"
+    - >=60     -> "N Tage im Markt — möglicherweise verhandelbar"
+
+    Threshold rationale: 60 days mirrors
+    ``src/analyzer/undervalue_detector.py``'s "seller may accept lower
+    offers" cutoff. Two anchors with two thresholds was noisy; we keep
+    one consistent "stale enough to negotiate" line in the sand.
+    """
+    days = listing.days_on_market
+    if days <= 0:
+        body = "Neu heute"
+    elif days == 1:
+        body = "1 Tag im Markt"
+    elif days < 60:
+        body = f"{days} Tage im Markt"
+    else:
+        body = f"{days} Tage im Markt — möglicherweise verhandelbar"
+    return f"🕐 {body}"
+
+
 def format_deal(listing: Listing, analysis) -> str:
     """One message per deal, Telegram MarkdownV1 (legacy) style."""
     flag_str = " · ".join(_flags(listing))
@@ -216,13 +250,16 @@ def format_deal(listing: Listing, analysis) -> str:
     # Limit title to one line
     title = (listing.title or "")[:90]
 
+    tom_line = _time_on_market_line(listing)
+
     msg = (
         f"🏠 *{district}* · {listing.rooms:.0f} Zi · {listing.size_sqm:.0f} m²\n"
         f"💰 *{listing.price:,.0f} €*  ({analysis.price_per_sqm:,.0f} €/m² · "
         f"{analysis.price_vs_market_pct:+.0f}%)\n"
         f"🎯 Score {analysis.deal_score:.0f}/100 · "
         f"Rendite {analysis.gross_rental_yield_pct:.1f}% · "
-        f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo"
+        f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo\n"
+        f"{tom_line}"
         f"{flag_line}"
         f"{sig_line}"
         f"\n\n{title}"
