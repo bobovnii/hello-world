@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,7 @@ from src.analyzer.market_data import HamburgMarketData
 from src.analyzer.scorer import DealScorer
 from src.database.db import Database
 from src.database.models import Listing, UserCriteria
+from src.report.html import build_digest_html
 from src.scraper.immoscout import ImmoScoutScraper
 from src.scraper.immowelt import ImmoweltScraper
 from src.scraper.kleinanzeigen import KleinanzeigenScraper
@@ -316,6 +319,50 @@ async def send_messages(
     return sent
 
 
+async def send_document(
+    bot_token: str,
+    channel: str,
+    html_str: str,
+    filename: str,
+    caption: str,
+    dry_run: bool,
+) -> bool:
+    """Send the HTML detail report as a Telegram document attachment.
+
+    Returns True on success, False on dry-run or exception. A failure
+    here logs the error but never raises — the digest must not crash on
+    a single bad attachment after the deal cards have already gone out.
+    """
+    if dry_run:
+        print("=== DRY RUN (document) ===")
+        print(filename)
+        print(html_str[:200])
+        print("---")
+        return False
+
+    try:
+        from telegram import Bot, InputFile
+        from telegram.constants import ParseMode
+    except ImportError:
+        raise SystemExit(
+            "python-telegram-bot not installed. Run: pip install 'python-telegram-bot>=21.0'"
+        )
+
+    bot = Bot(token=bot_token)
+    try:
+        buf = io.BytesIO(html_str.encode("utf-8"))
+        await bot.send_document(
+            chat_id=channel,
+            document=InputFile(buf, filename=filename),
+            caption=caption,
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return True
+    except Exception as e:
+        logger.error("document send failed (%s): %s", filename, e)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
@@ -377,6 +424,33 @@ async def main_async(args) -> int:
         sent = await send_messages(token, channel, messages, args.dry_run)
         total_sent += sent
         total_searches_ok += 1
+
+        # HTML detail report: one document per search, sent after the
+        # cards. Skip when there are no deals — nothing to report.
+        # Caption uses the search NAME (human-readable, may contain
+        # Markdown specials) so we ASCII-escape via backslash. Slugs
+        # are [a-z0-9_]+; underscores are Markdown specials too, so
+        # escape them as well to keep parse_mode=MARKDOWN happy.
+        if top:
+            today = datetime.now().strftime("%Y%m%d")
+            safe_slug = slug.replace("_", "-")  # underscores trigger _italic_
+            filename = f"hamburg_deals_{slug}_{today}.html"
+            caption_name = (
+                search["name"]
+                .replace("_", r"\_")
+                .replace("*", r"\*")
+                .replace("[", r"\[")
+                .replace("`", r"\`")
+            )
+            caption = f"📎 Detailreport: {caption_name}"
+            html_doc = build_digest_html(
+                search_name=search["name"],
+                search_slug=safe_slug,
+                deals=top,
+            )
+            await send_document(
+                token, channel, html_doc, filename, caption, args.dry_run
+            )
 
         # Mark seen only on successful send (or in dry-run, leave unmarked
         # so next real run posts them).
