@@ -195,6 +195,37 @@ AUSBAU_KEYWORDS = [
     "entwicklungspotenzial", "ausbaumöglichkeit",
 ]
 
+# Off-plan / pre-construction / cooperative-share listings that pollute the
+# digest because their "price" is not what you actually pay for an existing
+# unit. We drop these at the scraper layer (see BaseScraper._is_off_plan_or_coop).
+#
+# Two distinct classes are conflated here intentionally — both are "non-existing
+# house at the price shown" from the investor's perspective:
+#   1. Off-plan / pre-construction projects: "Neubauprojekt", "Bauträger",
+#      "voraussichtliche Fertigstellung Q3 2027". Asking is pre-marketing
+#      starting price; no negotiation; delivery 1–3 years out; can be cancelled.
+#   2. Wohngenossenschaft (cooperative): you buy a SHARE giving you the right
+#      to live there; not investable as buy-to-let; price/m² looks tiny
+#      (~€1k/m²) because share ≠ unit value. Real-world example flagged by
+#      the user: "Op'n Holm" in Hamburg.
+OFF_PLAN_PROJECT_KEYWORDS = [
+    # Cooperative
+    "wohngenossenschaft", "genossenschaftsanteil", "genossenschaftswohnung",
+    "wohnungsgenossenschaft",
+    # Explicit project / pre-construction
+    "neubauprojekt", "bauträgerprojekt", "wohnprojekt im bau",
+    "vorvermarktung", "in projektierung", "noch zu errichten",
+    "in projektplanung",
+    # Marketing language for off-plan
+    "voraussichtliche fertigstellung", "geplante fertigstellung",
+    "schlüsselfertig 20",  # "schlüsselfertig 2027"
+    "fertigstellung 20",   # "fertigstellung 2027"
+    "fertigstellung q1", "fertigstellung q2", "fertigstellung q3", "fertigstellung q4",
+    "bezugsfertig 20",
+    "bauphase",
+    "noch zu bauen",
+]
+
 
 def detect_district(address: str, zip_code: str = "") -> str:
     """Map an address or zip code to a Hamburg district (Bezirk)."""

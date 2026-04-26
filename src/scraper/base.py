@@ -8,7 +8,14 @@ from abc import ABC, abstractmethod
 import requests
 
 from src.database.models import Listing, UserCriteria
-from .utils import RateLimiter, get_headers, can_fetch, fetch_page, MFH_KEYWORDS
+from .utils import (
+    RateLimiter,
+    get_headers,
+    can_fetch,
+    fetch_page,
+    MFH_KEYWORDS,
+    OFF_PLAN_PROJECT_KEYWORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +90,11 @@ class BaseScraper(ABC):
                 detail_html = self.fetch(detail_url)
                 if detail_html:
                     listing = self.parse_listing_detail(detail_html, detail_url)
+                    if listing and self._is_off_plan_or_coop(listing):
+                        self.logger.info(
+                            f"  Skipped (off-plan/coop): {(listing.title or '')[:60]}"
+                        )
+                        continue
                     if listing and self._matches_criteria(listing, criteria):
                         # For multi-family search, validate MFH classification
                         if "multi_family" in criteria.property_types:
@@ -107,6 +119,38 @@ class BaseScraper(ABC):
             f"{self.PLATFORM_NAME}: Found {len(all_listings)} valid listings"
         )
         return all_listings
+
+    @staticmethod
+    def _is_off_plan_or_coop(listing: Listing) -> bool:
+        """Return True if listing is a cooperative share or pre-construction project.
+
+        These are filtered out because the displayed price doesn't reflect what
+        the investor actually pays for an existing, occupiable unit:
+        - Wohngenossenschaft: €/m² shown is share-price, not unit value.
+        - Off-plan / Bauträger: pre-marketing asking price, delivery 1-3y away.
+
+        Conservative: matches keywords in the title/description AND a price/m²
+        sanity floor. The keyword check is the primary signal; the €800/m²
+        floor is a backup that catches cooperative listings whose title is
+        innocuous (just a development name like "Op'n Holm") but whose
+        price/m² is impossibly low for any German market (cheapest district
+        in our seeds is Heide at €2 100/m²).
+        """
+        title = (listing.title or "").lower()
+        desc = (listing.description or "").lower()
+        text = f"{title} {desc}"
+        if any(kw in text for kw in OFF_PLAN_PROJECT_KEYWORDS):
+            return True
+        # Sanity floor: anything below €1 500/m² in any German city is
+        # almost certainly a cooperative share (Op'n Holm sits at €1 283/m²),
+        # a typo, or a parking-spot listing. Accepting that we'd drop a
+        # genuine €1 200/m² rural East fixer-upper is a fair trade — the
+        # user explicitly asked to filter out the weird stuff.
+        if listing.size_sqm > 0 and listing.price > 0:
+            price_per_sqm = listing.price / listing.size_sqm
+            if price_per_sqm < 1500:
+                return True
+        return False
 
     @staticmethod
     def _matches_criteria(listing: Listing, criteria: UserCriteria) -> bool:

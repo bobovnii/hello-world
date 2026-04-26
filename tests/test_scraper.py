@@ -14,8 +14,10 @@ from src.scraper.utils import (
     DACHGESCHOSS_KEYWORDS,
     AUSBAU_KEYWORDS,
     MFH_KEYWORDS,
+    OFF_PLAN_PROJECT_KEYWORDS,
 )
 from src.database.models import UserCriteria, Listing
+from src.scraper.base import BaseScraper
 from src.scraper.immoscout import ImmoScoutScraper
 from src.scraper.kleinanzeigen import KleinanzeigenScraper
 from src.scraper.immowelt import ImmoweltScraper
@@ -270,6 +272,90 @@ class TestKeywordLists:
     def test_ausbau_keywords(self):
         assert len(AUSBAU_KEYWORDS) > 0
         assert "ausbaureserve" in AUSBAU_KEYWORDS
+
+    def test_off_plan_project_keywords(self):
+        assert len(OFF_PLAN_PROJECT_KEYWORDS) > 0
+        # Cooperative
+        assert "wohngenossenschaft" in OFF_PLAN_PROJECT_KEYWORDS
+        # Pre-construction project
+        assert "neubauprojekt" in OFF_PLAN_PROJECT_KEYWORDS
+        assert "voraussichtliche fertigstellung" in OFF_PLAN_PROJECT_KEYWORDS
+
+
+def _mk_listing(**overrides) -> Listing:
+    """Minimal valid Listing for filter tests."""
+    base = dict(
+        id="test_1", platform="immoscout",
+        url="https://example.com/1", title="3-Zimmer-Wohnung",
+        price=300000.0, size_sqm=70.0, rooms=3.0,
+        description="", address="", district="",
+    )
+    base.update(overrides)
+    return Listing(**base)
+
+
+class TestOffPlanFilter:
+    """``BaseScraper._is_off_plan_or_coop`` drops cooperative shares and
+    pre-construction projects so they don't pollute the digest."""
+
+    def test_real_world_op_n_holm_cooperative_dropped(self):
+        # Real listing the user flagged: Op'n Holm cooperative.
+        l = _mk_listing(
+            id="immoscout_165545304",
+            title="Op'n Holm - 4-Zimmer - Süd-West-Balkon - private Wohngenossenschaft",
+            price=118000.0, size_sqm=92.0,
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is True
+
+    def test_neubauprojekt_in_title_dropped(self):
+        l = _mk_listing(
+            title="Erdgeschosswohnung mit Terrasse im Neubauprojekt Grüner Winkel",
+            price=409000.0, size_sqm=70.0,
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is True
+
+    def test_voraussichtliche_fertigstellung_in_description_dropped(self):
+        l = _mk_listing(
+            title="Schöne 2-Zimmer-Wohnung",
+            description="Voraussichtliche Fertigstellung Q3 2027.",
+            price=420000.0, size_sqm=58.0,
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is True
+
+    def test_low_price_per_sqm_floor_catches_share_listings(self):
+        # No keyword in title, but €1 280/m² is impossibly low for any
+        # German market — almost certainly a cooperative share.
+        l = _mk_listing(
+            title="Op'n Holm - 4-Zimmer Balkon",
+            price=118000.0, size_sqm=92.0,  # ~€1 283/m²
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is True
+
+    def test_completed_neubau_kept(self):
+        # Plain "Neubau" without project markers is a completed new build —
+        # legitimate to surface (e.g., 2024-built unit being resold in 2026).
+        l = _mk_listing(
+            title="Neubau-Wohnung 2 Zimmer mit Balkon",
+            description="Bezugsfertig, vom Vorbesitzer.",
+            price=380000.0, size_sqm=55.0,
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is False
+
+    def test_normal_listing_kept(self):
+        l = _mk_listing(
+            title="3-Zimmer-Wohnung in zentraler Lage",
+            description="Bezugsfrei, Erstbezug nach Sanierung.",
+            price=350000.0, size_sqm=85.0,
+        )
+        assert BaseScraper._is_off_plan_or_coop(l) is False
+
+    def test_zero_size_does_not_crash(self):
+        l = _mk_listing(price=300000.0, size_sqm=0.0)
+        assert BaseScraper._is_off_plan_or_coop(l) is False
+
+    def test_zero_price_does_not_crash(self):
+        l = _mk_listing(price=0.0, size_sqm=70.0)
+        assert BaseScraper._is_off_plan_or_coop(l) is False
 
 
 class TestEnrichedFieldDetection:
