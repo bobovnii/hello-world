@@ -97,8 +97,14 @@ CITIES: dict[str, CityInfo] = {
         slug="dresden",
         immowelt_path="dresden",
         kleinanzeigen_path="dresden",
-        # l4030 = Dresden (verified from kleinanzeigen URL pattern).
-        kleinanzeigen_location_id="l4030",
+        # l3820 = Dresden - Sachsen on kleinanzeigen. Verified live via
+        # the location-autocomplete endpoint
+        # (https://www.kleinanzeigen.de/s-ort-empfehlungen.json?query=dresden):
+        # the previously hard-coded ``l4030`` resolves to *Annaberg-
+        # Buchholz* (also Sachsen, ~120 km away), so any Dresden search
+        # built on l4030 returned listings from a completely different
+        # part of the Bundesland.
+        kleinanzeigen_location_id="l3820",
         ohne_makler_path="sachsen/dresden",
         # Dresden zips are 01067-01328. The leading zero matters for the
         # int comparison: int("01067") == 1067, so the ranges below are
@@ -113,13 +119,14 @@ CITIES: dict[str, CityInfo] = {
         slug="heide",
         immowelt_path="heide",
         kleinanzeigen_path="heide",
-        # l1814 = Kreis Dithmarschen on kleinanzeigen. Heide itself
-        # doesn't have a town-level location ID; the district-level ID is
-        # the closest match. UNCERTAINTY: not independently verified end-
-        # to-end; if Heide returns 0 listings the URL might need a
-        # different ID (e.g. Kreis Dithmarschen could be l1809 or similar
-        # depending on the kleinanzeigen taxonomy).
-        kleinanzeigen_location_id="l1814",
+        # l836 = "Heide - Dithmarschen" on kleinanzeigen. Verified live
+        # via the location-autocomplete endpoint
+        # (https://www.kleinanzeigen.de/s-ort-empfehlungen.json?query=heide).
+        # The previously hard-coded ``l1814`` actually resolves to
+        # *Arnsberg, Nordrhein-Westfalen* (~500 km from Heide!), which
+        # is why the Heide search was returning 59759-zip listings from
+        # NRW until the post-fetch zip filter was added below.
+        kleinanzeigen_location_id="l836",
         # Ohne-Makler URL structure is /immobilien/{Bundesland}/{Stadt}/.
         # Heide is in Schleswig-Holstein.
         ohne_makler_path="schleswig-holstein/heide",

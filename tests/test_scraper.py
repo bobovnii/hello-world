@@ -181,13 +181,15 @@ class TestCityAwareSearchURLs:
         scraper = KleinanzeigenScraper()
         url = scraper.build_search_url(UserCriteria(city="dresden"))
         assert "/dresden/" in url
-        assert "l4030" in url
+        # l3820 = Dresden - Sachsen (was l4030 = Annaberg-Buchholz, wrong).
+        assert "l3820" in url
 
     def test_kleinanzeigen_heide(self):
         scraper = KleinanzeigenScraper()
         url = scraper.build_search_url(UserCriteria(city="heide"))
         assert "/heide/" in url
-        assert "l1814" in url
+        # l836 = Heide - Dithmarschen (was l1814 = Arnsberg NRW, wrong).
+        assert "l836" in url
 
     def test_kleinanzeigen_default_is_hamburg(self):
         scraper = KleinanzeigenScraper()
@@ -356,6 +358,95 @@ class TestOffPlanFilter:
     def test_zero_price_does_not_crash(self):
         l = _mk_listing(price=0.0, size_sqm=70.0)
         assert BaseScraper._is_off_plan_or_coop(l) is False
+
+
+class TestKleinanzeigenRegionFilter:
+    """``KleinanzeigenScraper._passes_region_filter`` is the defense-in-depth
+    layer that drops cross-region listings even when the location_id is
+    correct (kleinanzeigen's radius search routinely surfaces adjacent
+    municipalities). The user received a 59759-Arnsberg listing under the
+    Heide search; this filter would have caught it regardless of the
+    location_id bug."""
+
+    def _scraper_with_city(self, _criteria_city: str) -> KleinanzeigenScraper:
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        return s
+
+    def _heide_criteria(self) -> UserCriteria:
+        return UserCriteria(city="heide", property_types=["apartment"])
+
+    def _berlin_criteria(self) -> UserCriteria:
+        return UserCriteria(city="berlin", property_types=["apartment"])
+
+    def _hamburg_criteria(self) -> UserCriteria:
+        return UserCriteria(city="hamburg", property_types=["apartment"])
+
+    def test_arnsberg_listing_dropped_under_heide_search(self):
+        """The exact case the user flagged: zip 59759 (NRW) under Heide."""
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="Ohne Provision Etagenwohnung in 59759 Arnsberg",
+            address="59759 Arnsberg",
+            zip_code="59759",
+        )
+        assert s._passes_region_filter(l, self._heide_criteria()) is False
+
+    def test_heide_zip_passes_under_heide_search(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="3-Zimmer-Wohnung in Heide",
+            address="25746 Heide",
+            zip_code="25746",
+        )
+        assert s._passes_region_filter(l, self._heide_criteria()) is True
+
+    def test_berlin_zip_passes_under_berlin_search(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="2-Zimmer Karlshorst",
+            address="10318 Berlin",
+            zip_code="10318",
+        )
+        assert s._passes_region_filter(l, self._berlin_criteria()) is True
+
+    def test_hamburg_zip_dropped_under_berlin_search(self):
+        """Zip 22087 (Hamburg) must not pass a Berlin search even if the
+        kleinanzeigen radius found it."""
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="2-Zimmer in Hamburg",
+            address="22087 Hamburg",
+            zip_code="22087",
+        )
+        assert s._passes_region_filter(l, self._berlin_criteria()) is False
+
+    def test_no_zip_falls_back_to_address_token(self):
+        """When the address has no zip but contains the city token, allow."""
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="2-Zimmer-Wohnung",
+            address="Heide, schöne Lage",
+            zip_code="",
+        )
+        assert s._passes_region_filter(l, self._heide_criteria()) is True
+
+    def test_no_zip_no_token_dropped(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="2-Zimmer-Wohnung",
+            address="Schöne Wohnung",
+            zip_code="",
+        )
+        assert s._passes_region_filter(l, self._heide_criteria()) is False
+
+    def test_zip_extracted_from_title_when_address_empty(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        l = _mk_listing(
+            title="Ohne Provision Etagenwohnung in 59759 Arnsberg",
+            address="",
+            zip_code="",
+        )
+        assert s._passes_region_filter(l, self._heide_criteria()) is False
 
 
 class TestEnrichedFieldDetection:

@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup, NavigableString
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
-from .city_registry import get_city
+from .city_registry import CityInfo, get_city
 from .utils import (
     clean_price, clean_size, clean_rooms, detect_district,
     MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
@@ -23,6 +23,62 @@ class KleinanzeigenScraper(BaseScraper):
     # Kept for backward compat — the active value comes from the city
     # registry. Tests still assert the Hamburg URL contains this token.
     HAMBURG_LOCATION_ID = "l9409"
+
+    # Defense-in-depth: even with the correct location_id (e.g. l9409 for
+    # Hamburg, l836 for Heide-Dithmarschen), kleinanzeigen's radius search
+    # routinely surfaces listings from adjacent municipalities. The user
+    # received a 59759-Arnsberg listing under the Heide search; root cause
+    # was the wrong location_id (l1814 was Arnsberg NRW), but even after
+    # that fix the radius leak remains a known platform behaviour.
+    # tests/test_kleinanzeigen_locations.py is the *root-cause* guard
+    # (verifies hardcoded IDs against kleinanzeigen's autocomplete);
+    # this filter is the *belt* that catches what the autocomplete-correct
+    # ID still leaks.
+    _ZIP_RE = re.compile(r"\b(\d{5})\b")
+
+    def _passes_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Drop listings whose address is outside ``criteria.city``.
+
+        Two-step gate:
+        1. Extract a 5-digit zip from address/title/zip_code; if it's in any
+           of the city's ``zip_ranges``, accept.
+        2. If no zip extractable, fall back to a city-name token match
+           against ``city.address_tokens``.
+        Reject otherwise.
+        """
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+        except ValueError:
+            return True  # Unknown city — don't filter (fail-open).
+
+        # Try every place a zip might hide.
+        sources = [
+            getattr(listing, "zip_code", "") or "",
+            listing.address or "",
+            listing.title or "",
+        ]
+        zip_str = ""
+        for s in sources:
+            m = self._ZIP_RE.search(s)
+            if m:
+                zip_str = m.group(1)
+                break
+
+        if zip_str:
+            try:
+                z = int(zip_str)
+            except ValueError:
+                z = -1
+            if any(low <= z <= high for (low, high) in city.zip_ranges):
+                return True
+            # Zip extracted but not in range → out-of-region. Drop.
+            return False
+
+        # No zip found anywhere. Fall back to address-token match.
+        addr_lower = (listing.address or listing.title or "").lower()
+        if any(tok.lower() in addr_lower for tok in city.address_tokens):
+            return True
+        return False
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
         # Categories:

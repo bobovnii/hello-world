@@ -95,6 +95,15 @@ class BaseScraper(ABC):
                             f"  Skipped (off-plan/coop): {(listing.title or '')[:60]}"
                         )
                         continue
+                    if listing and not self._passes_region_filter(listing, criteria):
+                        # Subclasses may opt into a post-fetch zip-range
+                        # gate to drop cross-region noise. Default impl
+                        # is a no-op so other scrapers behave as before.
+                        self.logger.info(
+                            f"  Skipped (out-of-region): "
+                            f"{(listing.address or listing.title or '')[:60]}"
+                        )
+                        continue
                     if listing and self._matches_criteria(listing, criteria):
                         # For multi-family search, validate MFH classification
                         if "multi_family" in criteria.property_types:
@@ -119,6 +128,17 @@ class BaseScraper(ABC):
             f"{self.PLATFORM_NAME}: Found {len(all_listings)} valid listings"
         )
         return all_listings
+
+    def _passes_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Return True if ``listing`` belongs to ``criteria.city``.
+
+        Default: always True. Scrapers whose upstream URL leaks cross-
+        region results (e.g. kleinanzeigen, where the path slug like
+        ``/heide/`` is decorative and the location ID can resolve to a
+        completely different town) should override this and apply a
+        zip-range / address-token gate.
+        """
+        return True
 
     @staticmethod
     def _is_off_plan_or_coop(listing: Listing) -> bool:

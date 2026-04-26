@@ -87,10 +87,16 @@ class TestRegistryShape:
         assert any(low <= 25746 <= hi for low, hi in heide.zip_ranges)
 
     def test_kleinanzeigen_ids_match_spec(self):
+        # IDs verified against kleinanzeigen.de's location-autocomplete
+        # endpoint (see tests/test_kleinanzeigen_locations.py for the
+        # network-marked verification). Previous values l4030/l1814 were
+        # WRONG — l4030 = Annaberg-Buchholz (~120km from Dresden),
+        # l1814 = Arnsberg NRW (~500km from Heide). Hardcoded by guess
+        # at ship time, never validated.
         assert get_city("hamburg").kleinanzeigen_location_id == "l9409"
         assert get_city("berlin").kleinanzeigen_location_id == "l3331"
-        assert get_city("dresden").kleinanzeigen_location_id == "l4030"
-        assert get_city("heide").kleinanzeigen_location_id == "l1814"
+        assert get_city("dresden").kleinanzeigen_location_id == "l3820"
+        assert get_city("heide").kleinanzeigen_location_id == "l836"
 
     def test_ohne_makler_path_for_heide_includes_bundesland(self):
         """Heide's ohne-makler URL needs the Bundesland prefix."""
