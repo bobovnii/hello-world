@@ -89,6 +89,20 @@ class ImmoweltScraper(BaseScraper):
                         has_mfh_keyword = any(kw in text for kw in MFH_KEYWORDS)
                         if not has_mfh_keyword and listing.size_sqm < 120:
                             continue
+                    # Off-plan / cooperative-share filter — immowelt overrides
+                    # BaseScraper.search() so the hooks must be re-called.
+                    if self._is_off_plan_or_coop(listing):
+                        self.logger.info(
+                            f"  Skipped (off-plan/coop): "
+                            f"{(listing.title or '')[:60]}"
+                        )
+                        continue
+                    if not self._passes_region_filter(listing, criteria):
+                        self.logger.info(
+                            f"  Skipped (out-of-region): "
+                            f"{(listing.address or listing.title or '')[:60]}"
+                        )
+                        continue
                     seen_urls.add(listing.url)
                     all_listings.append(listing)
                     self.logger.info(

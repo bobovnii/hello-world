@@ -63,6 +63,20 @@ class OhneMaklerScraper(BaseScraper):
                         if enriched and self._matches_criteria(enriched, criteria):
                             if "multi_family" in criteria.property_types and enriched.property_type != "multi_family":
                                 continue
+                            # Off-plan / cooperative-share filter — must re-call
+                            # since ohne-makler overrides BaseScraper.search().
+                            if self._is_off_plan_or_coop(enriched):
+                                self.logger.info(
+                                    f"  Skipped (off-plan/coop): "
+                                    f"{(enriched.title or '')[:60]}"
+                                )
+                                continue
+                            if not self._passes_region_filter(enriched, criteria):
+                                self.logger.info(
+                                    f"  Skipped (out-of-region): "
+                                    f"{(enriched.address or enriched.title or '')[:60]}"
+                                )
+                                continue
                             seen_urls.add(enriched.url)
                             all_listings.append(enriched)
                             self.logger.info(

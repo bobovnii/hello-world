@@ -449,6 +449,52 @@ class TestKleinanzeigenRegionFilter:
         assert s._passes_region_filter(l, self._heide_criteria()) is False
 
 
+class TestAllScrapersCallFilterHooks:
+    """REGRESSION GUARD. Three of four scrapers (immoscout, immowelt,
+    ohne-makler) override ``BaseScraper.search()`` and previously bypassed
+    BOTH ``_is_off_plan_or_coop`` and ``_passes_region_filter`` — letting
+    Op'n Holm Wohngenossenschaft listings reach the user's Telegram
+    digest under the Heide search even after the filters shipped.
+
+    This test reads each scraper's source and asserts the hooks are
+    called somewhere in the file. Source-grep is brittle but cheaper
+    than a full integration test, and the failure mode (silent leak)
+    is invisible without an explicit guard."""
+
+    @pytest.mark.parametrize("module_path", [
+        # Only scrapers that override BaseScraper.search() need their own
+        # call — kleinanzeigen uses the base flow which handles it.
+        "src/scraper/immoscout.py",
+        "src/scraper/immowelt.py",
+        "src/scraper/ohne_makler.py",
+    ])
+    def test_scraper_calls_off_plan_filter(self, module_path):
+        with open(module_path, encoding="utf-8") as f:
+            source = f.read()
+        assert "_is_off_plan_or_coop" in source, (
+            f"{module_path} must call self._is_off_plan_or_coop() inside its "
+            f"search loop. Without this, cooperative-share and off-plan "
+            f"listings (e.g. Op'n Holm Wohngenossenschaft) leak into the "
+            f"digest. The base class hook only fires for scrapers that don't "
+            f"override search()."
+        )
+
+    @pytest.mark.parametrize("module_path", [
+        "src/scraper/immoscout.py",
+        "src/scraper/immowelt.py",
+        "src/scraper/ohne_makler.py",
+        # kleinanzeigen also calls it — defines the override.
+    ])
+    def test_scraper_calls_region_filter(self, module_path):
+        with open(module_path, encoding="utf-8") as f:
+            source = f.read()
+        assert "_passes_region_filter" in source, (
+            f"{module_path} must call self._passes_region_filter() inside "
+            f"its search loop. Without this, cross-region listings can "
+            f"reach the digest under the wrong city."
+        )
+
+
 class TestEnrichedFieldDetection:
     """Test that enriched fields are detected correctly from text."""
 

@@ -128,6 +128,25 @@ class ImmoScoutScraper(BaseScraper):
                 if is_mfh and listing.property_type != "multi_family":
                     continue
 
+                # Off-plan / cooperative-share filter (shared with base class).
+                # ImmoScout's mobile-API loop overrides BaseScraper.search()
+                # and so MUST re-call this hook explicitly — without it,
+                # Op'n Holm Wohngenossenschaft and Bauträger projects leak.
+                if self._is_off_plan_or_coop(listing):
+                    self.logger.info(
+                        f"  Skipped (off-plan/coop): "
+                        f"{(listing.title or '')[:60]}"
+                    )
+                    continue
+                # Per-city region filter (no-op by default; subclasses may
+                # override). Same reason as above for re-calling here.
+                if not self._passes_region_filter(listing, criteria):
+                    self.logger.info(
+                        f"  Skipped (out-of-region): "
+                        f"{(listing.address or listing.title or '')[:60]}"
+                    )
+                    continue
+
                 seen_ids.add(listing.id)
                 all_listings.append(listing)
                 self.logger.info(
