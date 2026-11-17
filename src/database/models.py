@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime
 
 
@@ -34,6 +34,12 @@ class Listing:
     listing_date: str | None = None
     description: str | None = None
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # First time WE scraped this listing. Empty default means "DB will fill
+    # this on INSERT" — Database.save_listing populates it explicitly so the
+    # canonical timestamp is set in one place. Re-scrapes of an existing row
+    # MUST NOT overwrite this column (see Database.save_listing's UPDATE).
+    # Distinct from scraped_at, which is refreshed on every scrape.
+    first_seen_at: str = ""
     image_urls: list[str] = field(default_factory=list)
     # Enriched fields for price justification analysis
     is_erbbaurecht: bool = False  # Leasehold land (Erbpacht) - major price reducer
@@ -52,6 +58,45 @@ class Listing:
         if self.size_sqm and self.size_sqm > 0:
             return self.price / self.size_sqm
         return 0.0
+
+    @property
+    def days_on_market(self) -> int:
+        """Whole days since we first scraped this listing.
+
+        "We first scraped" — NOT "the listing was published". The scrapers'
+        ``listing_date`` is unreliable (often relative text like "vor 3
+        Tagen"), so we report what we can defend: time since first sighting.
+
+        Empty/missing ``first_seen_at`` returns 0 — sane fallback for any
+        row that somehow slipped through without a timestamp (legacy DB
+        before backfill ran, hand-inserted test fixture, etc.). A negative
+        delta (clock skew, future timestamp) also clamps to 0.
+
+        Malformed ISO strings raise nothing here either: we treat them as
+        "unknown, fall back to 0" so the digest never crashes on a single
+        bad row. Logging that case is the caller's call; this is a pure
+        property.
+
+        Tz-aware ISO strings (e.g. ``'2026-04-01T08:00:00+00:00'``) are
+        accepted: we strip the tzinfo before subtracting from a naive
+        ``datetime.now()`` so we don't raise ``TypeError: can't subtract
+        offset-naive and offset-aware datetimes``. Treating "now" as local
+        and "first" as local-without-its-offset is fine for whole-day
+        bucketing — the worst-case error is one day in either direction,
+        which the caller's bucket boundaries already absorb.
+        """
+        if not self.first_seen_at:
+            return 0
+        try:
+            first = datetime.fromisoformat(self.first_seen_at)
+            # Strip tz so subtraction with naive datetime.now() never raises.
+            if first.tzinfo is not None:
+                first = first.replace(tzinfo=None)
+            delta = datetime.now() - first
+        except (ValueError, TypeError):
+            return 0
+        days = delta.days
+        return days if days > 0 else 0
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -98,6 +143,10 @@ class UserCriteria:
     min_cashflow_monthly: float = 0.0
     # Scoring preference
     risk_tolerance: str = "moderate"  # conservative | moderate | aggressive
+    # City slug (CITY-SUPPORT-1): identifies which city the search targets.
+    # Defaults to "hamburg" so existing pre-multi-city callers/tests keep
+    # working unchanged. Resolved against ``src.scraper.city_registry``.
+    city: str = "hamburg"
     # Telegram
     chat_id: int | None = None
 
@@ -114,12 +163,28 @@ class UserCriteria:
             d["property_types"] = json.loads(d["property_types"])
         if isinstance(d.get("districts"), str):
             d["districts"] = json.loads(d["districts"])
+        # Filter unknown keys so DB rows from older/newer schemas reload
+        # cleanly (mirrors ``Listing.from_dict``). Without this, adding a
+        # new field like ``city`` would explode any caller that hands us a
+        # dict with extra columns from a future migration.
+        known = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)
 
 
 @dataclass
 class AnalysisResult:
-    """Analysis output for a single listing."""
+    """Analysis output for a single listing.
+
+    Sub-score fields (``score_price``, ``score_yield``, ``score_cashflow``,
+    ``score_location``) are intentionally **dataclass-only** for the
+    iter-2 batch — they are NOT persisted to the ``analysis_results``
+    table yet (no migration). The scorer populates them in-memory and the
+    Telegram digest renders them; reloads from the DB will see the
+    default ``0.0`` for each. The next schema-change batch will add a
+    migration to persist them. ``from_dict`` filters unknown DB columns
+    so old rows reload cleanly even when the column set drifts.
+    """
 
     listing_id: str
     price_per_sqm: float = 0.0
@@ -138,10 +203,25 @@ class AnalysisResult:
     deal_score: float = 0.0  # 0-100
     undervalue_reasons: list[str] = field(default_factory=list)
     analyzed_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # Sub-scores (dataclass-only, not persisted yet — see class docstring).
+    # Default 0.0 means "unknown / reloaded-from-DB"; a fresh analysis
+    # will populate non-zero values via DealScorer.
+    score_price: float = 0.0
+    score_yield: float = 0.0
+    score_cashflow: float = 0.0
+    score_location: float = 0.0
+    # InvestmentView (src/analyzer/investment.py); in-memory only, like the sub-scores.
+    investment: object | None = None
 
     def to_dict(self) -> dict:
-        d = asdict(self)
+        d = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "investment"}
         d["undervalue_reasons"] = json.dumps(d["undervalue_reasons"])
+        # Strip sub-scores: not persisted yet (no DB column). Pulling them
+        # into to_dict() would break save_analysis() — it does `INSERT OR
+        # REPLACE INTO analysis_results (cols...)` and SQLite errors on
+        # unknown column names.
+        for k in ("score_price", "score_yield", "score_cashflow", "score_location"):
+            d.pop(k, None)
         return d
 
     @classmethod
@@ -149,4 +229,8 @@ class AnalysisResult:
         d = dict(d)
         if isinstance(d.get("undervalue_reasons"), str):
             d["undervalue_reasons"] = json.loads(d["undervalue_reasons"])
+        # Filter unknown keys so DB rows from older schemas reload cleanly
+        # (mirrors Listing.from_dict).
+        known = set(cls.__dataclass_fields__.keys())
+        d = {k: v for k, v in d.items() if k in known}
         return cls(**d)

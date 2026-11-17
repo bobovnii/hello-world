@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 import requests
 
 from src.database.models import Listing, UserCriteria
-from .utils import RateLimiter, get_headers, can_fetch, fetch_page, MFH_KEYWORDS
+from .city_registry import get_city
+from .utils import (
+    RateLimiter,
+    get_headers,
+    can_fetch,
+    fetch_page,
+    MFH_KEYWORDS,
+    OFF_PLAN_PROJECT_KEYWORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +27,9 @@ class BaseScraper(ABC):
 
     PLATFORM_NAME: str = ""
     BASE_URL: str = ""
+    # Rotate the User-Agent on every request (legacy behaviour). Scrapers
+    # whose target ties cookies to a UA fingerprint set this to False.
+    ROTATE_HEADERS: bool = True
 
     def __init__(self, rate_limit_min: float = 2.0, rate_limit_max: float = 5.0):
         self.session = requests.Session()
@@ -35,7 +47,7 @@ class BaseScraper(ABC):
             pass  # robots.txt check failure should not block scraping
 
         self.rate_limiter.wait()
-        return fetch_page(url, self.session)
+        return fetch_page(url, self.session, rotate_headers=self.ROTATE_HEADERS)
 
     @abstractmethod
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
@@ -83,6 +95,20 @@ class BaseScraper(ABC):
                 detail_html = self.fetch(detail_url)
                 if detail_html:
                     listing = self.parse_listing_detail(detail_html, detail_url)
+                    if listing and self._is_off_plan_or_coop(listing):
+                        self.logger.info(
+                            f"  Skipped (off-plan/coop): {(listing.title or '')[:60]}"
+                        )
+                        continue
+                    if listing and not self._passes_region_filter(listing, criteria):
+                        # Subclasses may opt into a post-fetch zip-range
+                        # gate to drop cross-region noise. Default impl
+                        # is a no-op so other scrapers behave as before.
+                        self.logger.info(
+                            f"  Skipped (out-of-region): "
+                            f"{(listing.address or listing.title or '')[:60]}"
+                        )
+                        continue
                     if listing and self._matches_criteria(listing, criteria):
                         # For multi-family search, validate MFH classification
                         if "multi_family" in criteria.property_types:
@@ -108,6 +134,85 @@ class BaseScraper(ABC):
         )
         return all_listings
 
+    def _passes_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Return True if ``listing`` belongs to ``criteria.city``.
+
+        Default: always True. Scrapers whose upstream URL leaks cross-
+        region results (e.g. kleinanzeigen, where the path slug like
+        ``/heide/`` is decorative and the location ID can resolve to a
+        completely different town) should override this and apply a
+        zip-range / address-token gate.
+        """
+        return True
+
+    _ZIP_RE = re.compile(r"\b(\d{5})\b")
+
+    def _zip_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Shared zip-range gate used by scrapers that opt into region filtering.
+
+        Two-step gate:
+        1. Extract a 5-digit zip from zip_code/address/title; if it's in any
+           of the city's ``zip_ranges``, accept, otherwise reject.
+        2. If no zip extractable, fall back to a city-name token match
+           against ``city.address_tokens``.
+        Unknown city → fail-open (True).
+        """
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+        except ValueError:
+            return True
+
+        sources = [
+            getattr(listing, "zip_code", "") or "",
+            listing.address or "",
+            listing.title or "",
+        ]
+        zip_str = ""
+        for s in sources:
+            m = self._ZIP_RE.search(s)
+            if m:
+                zip_str = m.group(1)
+                break
+
+        if zip_str:
+            z = int(zip_str)
+            return any(low <= z <= high for (low, high) in city.zip_ranges)
+
+        addr_lower = (listing.address or listing.title or "").lower()
+        return any(tok.lower() in addr_lower for tok in city.address_tokens)
+
+    @staticmethod
+    def _is_off_plan_or_coop(listing: Listing) -> bool:
+        """Return True if listing is a cooperative share or pre-construction project.
+
+        These are filtered out because the displayed price doesn't reflect what
+        the investor actually pays for an existing, occupiable unit:
+        - Wohngenossenschaft: €/m² shown is share-price, not unit value.
+        - Off-plan / Bauträger: pre-marketing asking price, delivery 1-3y away.
+
+        Conservative: matches keywords in the title/description AND a price/m²
+        sanity floor. The keyword check is the primary signal; the €800/m²
+        floor is a backup that catches cooperative listings whose title is
+        innocuous (just a development name like "Op'n Holm") but whose
+        price/m² is impossibly low for any German market (cheapest district
+        in our seeds is Heide at €2 100/m²).
+        """
+        title = (listing.title or "").lower()
+        desc = (listing.description or "").lower()
+        text = f"{title} {desc}"
+        if any(kw in text for kw in OFF_PLAN_PROJECT_KEYWORDS):
+            return True
+        # Sanity floor: anything below €1 500/m² in any German city is
+        # almost certainly a cooperative share (Op'n Holm sits at €1 283/m²),
+        # a typo, or a parking-spot listing. Accepting that we'd drop a
+        # genuine €1 200/m² rural East fixer-upper is a fair trade — the
+        # user explicitly asked to filter out the weird stuff.
+        if listing.size_sqm > 0 and listing.price > 0:
+            price_per_sqm = listing.price / listing.size_sqm
+            if price_per_sqm < 1500:
+                return True
+        return False
+
     @staticmethod
     def _matches_criteria(listing: Listing, criteria: UserCriteria) -> bool:
         """Post-filter: check listing matches basic criteria."""
@@ -124,7 +229,16 @@ class BaseScraper(ABC):
             if listing.rooms < criteria.min_rooms:
                 return False
         # District filter
-        if criteria.districts and listing.district:
+        # CITY-SUPPORT-1: ``detect_district`` is Hamburg-only — every
+        # non-Hamburg listing currently gets labelled "Hamburg" as the
+        # fallback. Applying the YAML district filter against that
+        # would drop every Berlin/Dresden/Heide listing. Until the
+        # generalised district detector lands, skip the filter when the
+        # criteria targets a non-Hamburg city. This is documented as an
+        # expected gap in ``city_registry.py`` and the architect's plan
+        # will address it properly.
+        is_hamburg_search = (getattr(criteria, "city", "hamburg") or "hamburg").lower() == "hamburg"
+        if is_hamburg_search and criteria.districts and listing.district:
             if listing.district not in criteria.districts:
                 return False
         return True

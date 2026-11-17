@@ -37,9 +37,9 @@ WEIGHT_PRESETS = {
 class DealScorer:
     """Scores and ranks real estate deals."""
 
-    def __init__(self, market_data: HamburgMarketData):
+    def __init__(self, market_data: HamburgMarketData, assumptions=None):
         self.market = market_data
-        self.metrics_calc = MetricsCalculator(market_data)
+        self.metrics_calc = MetricsCalculator(market_data, assumptions)
         self.undervalue_detector = UndervalueDetector(market_data)
 
     def score_listing(
@@ -51,6 +51,10 @@ class DealScorer:
 
         # Detect undervalue reasons
         reasons = self.undervalue_detector.detect(listing, analysis)
+        # The detector may enrich the listing from its description
+        # (is_rented + actual rent, Ausbau, ...). Recompute so yield,
+        # cash flow and the 10-year view use the enriched facts.
+        analysis = self.metrics_calc.calculate(listing, criteria)
         analysis.undervalue_reasons = reasons
 
         # Get weights based on risk tolerance
@@ -62,6 +66,14 @@ class DealScorer:
         cashflow_score = self._score_cashflow(analysis)
         undervalue_score = self._score_undervalue(reasons)
         location_score = self._score_location(listing.district)
+
+        # Surface the four headline sub-scores on the analysis dataclass
+        # so the digest card can render a Pr/Y/CF/Loc sparkline. Stored
+        # in-memory only for now — see AnalysisResult docstring.
+        analysis.score_price = round(price_score, 1)
+        analysis.score_yield = round(yield_score, 1)
+        analysis.score_cashflow = round(cashflow_score, 1)
+        analysis.score_location = round(location_score, 1)
 
         # Weighted composite
         total = (

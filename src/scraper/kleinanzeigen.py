@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup, NavigableString
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import CityInfo, get_city
 from .utils import (
     clean_price, clean_size, clean_rooms, detect_district,
     MFH_KEYWORDS, ERBBAURECHT_KEYWORDS, RENTED_KEYWORDS, KAPITALANLAGE_KEYWORDS,
@@ -19,8 +20,27 @@ class KleinanzeigenScraper(BaseScraper):
     PLATFORM_NAME = "kleinanzeigen"
     BASE_URL = "https://www.kleinanzeigen.de"
 
-    # Kleinanzeigen location ID for Hamburg
+    # Kept for backward compat — the active value comes from the city
+    # registry. Tests still assert the Hamburg URL contains this token.
     HAMBURG_LOCATION_ID = "l9409"
+
+    # Defense-in-depth: even with the correct location_id (e.g. l9409 for
+    # Hamburg, l836 for Heide-Dithmarschen), kleinanzeigen's radius search
+    # routinely surfaces listings from adjacent municipalities. The user
+    # received a 59759-Arnsberg listing under the Heide search; root cause
+    # was the wrong location_id (l1814 was Arnsberg NRW), but even after
+    # that fix the radius leak remains a known platform behaviour.
+    # tests/test_kleinanzeigen_locations.py is the *root-cause* guard
+    # (verifies hardcoded IDs against kleinanzeigen's autocomplete);
+    # this filter is the *belt* that catches what the autocomplete-correct
+    # ID still leaks.
+    def _passes_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Drop listings whose address is outside ``criteria.city``.
+
+        Implementation lives in ``BaseScraper._zip_region_filter`` so immowelt
+        can share it.
+        """
+        return self._zip_region_filter(listing, criteria)
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
         # Categories:
@@ -42,8 +62,20 @@ class KleinanzeigenScraper(BaseScraper):
             category = "c208"
             path_segment = "s-wohnung-kaufen"
 
-        # Use location ID to restrict to Hamburg
-        base = f"{self.BASE_URL}/{path_segment}/hamburg/{category}{self.HAMBURG_LOCATION_ID}"
+        # CITY-SUPPORT-1: per-city path + numeric location ID.
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+            city_path = city.kleinanzeigen_path
+            location_id = city.kleinanzeigen_location_id
+        except ValueError:
+            city_path = "hamburg"
+            location_id = self.HAMBURG_LOCATION_ID
+
+        # Use location ID to restrict to the city. Pagination is a PATH
+        # segment (``/seite:2/``) — as of Nov 2026 a ``seite:2`` query
+        # param is silently ignored and returns page 1 again.
+        page_segment = f"/seite:{page}" if page > 1 else ""
+        base = f"{self.BASE_URL}/{path_segment}/{city_path}{page_segment}/{category}{location_id}"
 
         params = []
         if criteria.budget_min > 0:
@@ -54,8 +86,6 @@ class KleinanzeigenScraper(BaseScraper):
             params.append(f"wohnflaeche.von={int(criteria.min_size_sqm)}")
         if criteria.min_rooms > 1:
             params.append(f"zimmer.von={int(criteria.min_rooms)}")
-        if page > 1:
-            params.append(f"seite:{page}")
 
         if params:
             return f"{base}?{'&'.join(params)}"
@@ -65,17 +95,26 @@ class KleinanzeigenScraper(BaseScraper):
         soup = BeautifulSoup(html, "lxml")
         results = []
 
-        # Kleinanzeigen uses article.aditem with data-adid
-        for item in soup.select("article.aditem"):
+        # Nov 2026 markup: <article data-adid="…" data-href="/s-anzeige/…">
+        # (utility-class styling, no ``aditem`` class any more). Older
+        # markup used <article class="aditem" data-adid="…"> with the link
+        # inside. Selecting on ``data-adid`` covers both.
+        seen: set[str] = set()
+        for item in soup.select("article[data-adid]"):
             ad_id = item.get("data-adid", "")
-            link = item.select_one("a[href*='/s-anzeige/']")
-            if not link:
+            href = item.get("data-href", "")
+            if not href:
+                link = item.select_one("a[href*='/s-anzeige/']")
+                if not link:
+                    continue
+                href = link.get("href", "")
+            if not href or "/s-anzeige/" not in href:
                 continue
-
-            href = link.get("href", "")
             if not href.startswith("http"):
                 href = f"{self.BASE_URL}{href}"
-
+            if href in seen:
+                continue
+            seen.add(href)
             results.append({"url": href, "id": ad_id})
 
         # Fallback: try list items
@@ -228,21 +267,33 @@ class KleinanzeigenScraper(BaseScraper):
         """
         details: dict = {}
 
-        for item in soup.select(".addetailslist--detail"):
-            # Get the value span
-            value_el = item.select_one(".addetailslist--detail--value")
-            if not value_el:
-                continue
-            value = value_el.get_text(strip=True)
+        # Two layouts are served interchangeably (Nov 2026 A/B):
+        #   classic:  <li class="addetailslist--detail">Wohnfläche
+        #               <span class="addetailslist--detail--value">82 m²</span></li>
+        #   restyled: <div id="viewad-details"><ul><li class="flex …">
+        #               <span>Wohnfläche</span><span class="text-right …">82 m²</span></li>
+        items = soup.select(".addetailslist--detail")
+        if not items:
+            items = soup.select("#viewad-details li")
 
-            # Get the label from the bare text nodes (before the span)
-            label_parts = []
-            for child in item.children:
-                if isinstance(child, NavigableString):
-                    text = child.strip()
-                    if text:
-                        label_parts.append(text)
-            label = " ".join(label_parts).lower()
+        for item in items:
+            value_el = item.select_one(".addetailslist--detail--value")
+            spans = item.find_all("span", recursive=False)
+            if value_el is not None:
+                value = value_el.get_text(strip=True)
+                # Label = bare text nodes before the value span
+                label_parts = []
+                for child in item.children:
+                    if isinstance(child, NavigableString):
+                        text = child.strip()
+                        if text:
+                            label_parts.append(text)
+                label = " ".join(label_parts).lower()
+            elif len(spans) >= 2:
+                label = spans[0].get_text(strip=True).lower()
+                value = spans[-1].get_text(strip=True)
+            else:
+                continue
 
             if "wohnfläche" in label or label == "fläche":
                 details["size"] = clean_size(value)

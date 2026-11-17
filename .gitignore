@@ -8,3 +8,5 @@ dist/
 build/
 .env
 data/deals_export.*
+config/searches.yaml
+reports/digest_*.md

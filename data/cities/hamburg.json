@@ -1,0 +1,91 @@
+{
+  "slug": "hamburg",
+  "display_name": "Hamburg",
+  "bundesland": "Hamburg",
+  "city": "Hamburg",
+  "data_year": 2025,
+  "mietspiegel_year": 2025,
+  "currency": "EUR",
+  "city_default_price_sqm": 4771,
+  "city_default_rent_sqm": 12.5,
+  "city_default_yield": 3.2,
+  "districts": {
+    "Altona": {
+      "avg_price_sqm_buy": 5800,
+      "avg_rent_sqm_month": 14.50,
+      "avg_gross_yield_pct": 3.0,
+      "trend": "rising",
+      "description": "Popular, central, family-friendly with Ottensen and Altona-Altstadt",
+      "zip_codes": ["22761", "22765", "22767", "22769"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Eimsbüttel": {
+      "avg_price_sqm_buy": 6200,
+      "avg_rent_sqm_month": 15.00,
+      "avg_gross_yield_pct": 2.9,
+      "trend": "stable",
+      "description": "Very popular residential area, high demand, Uni-Viertel nearby",
+      "zip_codes": ["20144", "20146", "20249", "20251", "20253", "20255", "20257", "20259"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Hamburg-Mitte": {
+      "avg_price_sqm_buy": 5500,
+      "avg_rent_sqm_month": 14.00,
+      "avg_gross_yield_pct": 3.1,
+      "trend": "stable",
+      "description": "City center incl. HafenCity, St. Pauli, St. Georg, Wilhelmsburg",
+      "zip_codes": ["20095", "20097", "20099", "20359", "20457", "20459", "21107", "21109"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Hamburg-Nord": {
+      "avg_price_sqm_buy": 5000,
+      "avg_rent_sqm_month": 13.00,
+      "avg_gross_yield_pct": 3.1,
+      "trend": "rising",
+      "description": "Winterhude, Eppendorf, Barmbek - popular with young professionals",
+      "zip_codes": ["22083", "22085", "22087", "22089", "22297", "22299", "22301", "22303", "22305", "22307", "22309"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Wandsbek": {
+      "avg_price_sqm_buy": 4200,
+      "avg_rent_sqm_month": 11.50,
+      "avg_gross_yield_pct": 3.3,
+      "trend": "rising",
+      "description": "Largest district, diverse - from urban Eilbek to suburban Volksdorf",
+      "zip_codes": ["22041", "22043", "22045", "22047", "22049", "22081", "22143", "22145", "22147", "22149", "22159"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Bergedorf": {
+      "avg_price_sqm_buy": 3500,
+      "avg_rent_sqm_month": 10.50,
+      "avg_gross_yield_pct": 3.6,
+      "trend": "stable",
+      "description": "Suburban, good value, growing infrastructure, Vier- und Marschlande",
+      "zip_codes": ["21029", "21031", "21033", "21035", "21037", "21039"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Harburg": {
+      "avg_price_sqm_buy": 3200,
+      "avg_rent_sqm_month": 10.00,
+      "avg_gross_yield_pct": 3.8,
+      "trend": "rising",
+      "description": "South of Elbe, best yields in Hamburg, TU Hamburg, improving infrastructure",
+      "zip_codes": ["21071", "21073", "21075", "21077", "21079", "21149"],
+      "source": "Hamburg Mietspiegel 2025 + ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    }
+  },
+  "purchase_costs_pct": {
+    "grunderwerbsteuer": 5.5,
+    "notar": 1.5,
+    "grundbuch": 0.5,
+    "makler": 3.57
+  },
+  "notes": "Data based on publicly available market reports. Update regularly for accuracy. Prices reflect average asking prices, actual transaction prices may differ."
+}

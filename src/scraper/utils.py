@@ -129,11 +129,22 @@ def clean_rooms(text: str) -> float | None:
     return None
 
 
-def fetch_page(url: str, session: requests.Session | None = None, timeout: int = 30) -> str | None:
-    """Fetch a page with proper headers. Returns HTML or None on error."""
+def fetch_page(
+    url: str,
+    session: requests.Session | None = None,
+    timeout: int = 30,
+    rotate_headers: bool = True,
+) -> str | None:
+    """Fetch a page with proper headers. Returns HTML or None on error.
+
+    ``rotate_headers=False`` keeps the session's own headers (stable
+    User-Agent). Sites that pair cookies with a UA fingerprint (immowelt
+    since its Nov 2026 relaunch) answer 403 when the UA changes mid-session.
+    """
     requester = session or requests
+    headers = get_headers() if (rotate_headers or session is None) else None
     try:
-        resp = requester.get(url, headers=get_headers(), timeout=timeout)
+        resp = requester.get(url, headers=headers, timeout=timeout)
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as e:
@@ -160,6 +171,9 @@ MFH_KEYWORDS = [
 ERBBAURECHT_KEYWORDS = [
     "erbbaurecht", "erbpacht", "erbbauzins", "erbbau",
     "pachtgrundstück", "leasehold",
+    # Hamburg-Makler critique iter-2: common wording the original list missed.
+    "pachtvertrag", "heimfallrecht", "im erbbau",
+    "grundstück gepachtet", "auf erbpacht",
 ]
 
 RENTED_KEYWORDS = [
@@ -190,6 +204,37 @@ AUSBAU_KEYWORDS = [
     "ausbaureserve", "ausbaufähig", "ausbau ", "rohbau",
     "nicht ausgebaut", "auszubauen", "ausbaupotenzial",
     "entwicklungspotenzial", "ausbaumöglichkeit",
+]
+
+# Off-plan / pre-construction / cooperative-share listings that pollute the
+# digest because their "price" is not what you actually pay for an existing
+# unit. We drop these at the scraper layer (see BaseScraper._is_off_plan_or_coop).
+#
+# Two distinct classes are conflated here intentionally — both are "non-existing
+# house at the price shown" from the investor's perspective:
+#   1. Off-plan / pre-construction projects: "Neubauprojekt", "Bauträger",
+#      "voraussichtliche Fertigstellung Q3 2027". Asking is pre-marketing
+#      starting price; no negotiation; delivery 1–3 years out; can be cancelled.
+#   2. Wohngenossenschaft (cooperative): you buy a SHARE giving you the right
+#      to live there; not investable as buy-to-let; price/m² looks tiny
+#      (~€1k/m²) because share ≠ unit value. Real-world example flagged by
+#      the user: "Op'n Holm" in Hamburg.
+OFF_PLAN_PROJECT_KEYWORDS = [
+    # Cooperative
+    "wohngenossenschaft", "genossenschaftsanteil", "genossenschaftswohnung",
+    "wohnungsgenossenschaft",
+    # Explicit project / pre-construction
+    "neubauprojekt", "bauträgerprojekt", "wohnprojekt im bau",
+    "vorvermarktung", "in projektierung", "noch zu errichten",
+    "in projektplanung",
+    # Marketing language for off-plan
+    "voraussichtliche fertigstellung", "geplante fertigstellung",
+    "schlüsselfertig 20",  # "schlüsselfertig 2027"
+    "fertigstellung 20",   # "fertigstellung 2027"
+    "fertigstellung q1", "fertigstellung q2", "fertigstellung q3", "fertigstellung q4",
+    "bezugsfertig 20",
+    "bauphase",
+    "noch zu bauen",
 ]
 
 

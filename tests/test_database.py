@@ -1,12 +1,19 @@
 """Tests for database operations."""
 
 import os
+import sqlite3
 import tempfile
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from src.database.models import Listing, UserCriteria, AnalysisResult
-from src.database.db import Database
+from src.database.db import Database, _MIGRATIONS_DIR, _split_sql_statements
 
 
 @pytest.fixture
@@ -148,3 +155,1014 @@ class TestModels:
         restored = UserCriteria.from_dict(d)
         assert restored.districts == ["Altona", "Harburg"]
         assert restored.property_types == ["apartment", "house"]
+
+    def test_criteria_carries_city_field(self):
+        """CITY-SUPPORT-1: ``city`` field round-trips through to/from_dict."""
+        criteria = UserCriteria(city="berlin")
+        restored = UserCriteria.from_dict(criteria.to_dict())
+        assert restored.city == "berlin"
+
+    def test_criteria_default_city_is_hamburg(self):
+        """Backward compat: existing callers that omit city get Hamburg."""
+        assert UserCriteria().city == "hamburg"
+
+    def test_criteria_from_dict_filters_unknown_keys(self):
+        """A dict carrying a future column must NOT raise TypeError.
+
+        Mirrors ``Listing.from_dict`` / ``AnalysisResult.from_dict`` so
+        forward-compat schema drift doesn't crash the loader.
+        """
+        d = UserCriteria(city="dresden").to_dict()
+        d["future_unknown_column"] = "value-from-tomorrow"
+        # Must not raise.
+        restored = UserCriteria.from_dict(d)
+        assert restored.city == "dresden"
+
+    def test_analysis_result_from_dict_tolerates_missing_subscore_keys(self):
+        """iter-2 item 8: ``AnalysisResult`` adds optional sub-score fields
+        (``score_price``, ...) that are NOT yet persisted to the DB. A row
+        loaded back from ``analysis_results`` must therefore reload cleanly
+        even though those keys are absent from the dict, AND the defaults
+        must be 0.0 so the digest's em-dash fallback fires.
+        """
+        # Mimic a row from the existing analysis_results schema: every
+        # persisted column is present, none of the new sub-score columns are.
+        legacy_row = {
+            "listing_id": "old_1",
+            "price_per_sqm": 4000.0,
+            "district_avg_price_sqm": 5000.0,
+            "price_vs_market_pct": -20.0,
+            "estimated_rent_monthly": 1100.0,
+            "gross_rental_yield_pct": 4.4,
+            "net_rental_yield_pct": 3.0,
+            "cap_rate_pct": 3.2,
+            "monthly_cashflow": 50.0,
+            "cash_on_cash_return_pct": 4.0,
+            "total_purchase_cost": 350_000.0,
+            "mortgage_monthly": 1200.0,
+            "equity_required": 70_000.0,
+            "deal_score": 65.0,
+            "undervalue_reasons": "[]",
+            "analyzed_at": "2026-04-01T08:00:00",
+        }
+        # Key assertion: this must NOT raise.
+        result = AnalysisResult.from_dict(legacy_row)
+        # Sub-scores fall back to defaults.
+        assert result.score_price == 0.0
+        assert result.score_yield == 0.0
+        assert result.score_cashflow == 0.0
+        assert result.score_location == 0.0
+        # And persisted fields survived.
+        assert result.deal_score == 65.0
+        assert result.listing_id == "old_1"
+
+    def test_analysis_result_from_dict_filters_unknown_columns(self):
+        """Future-proofing: unknown columns from a newer schema must not
+        raise ``TypeError: unexpected keyword argument`` on rollback."""
+        d = {
+            "listing_id": "x",
+            "deal_score": 50.0,
+            "undervalue_reasons": "[]",
+            # Mystery future column.
+            "future_score_factor": 0.42,
+        }
+        # Must not raise.
+        result = AnalysisResult.from_dict(d)
+        assert result.listing_id == "x"
+        assert result.deal_score == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Migration / schema tests (FLAVOR_B_DESIGN §5.5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def db_path():
+    """Bare temp path (no Database yet) so the test can drive __init__."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    yield path
+    # Remove DB + any WAL sidecars.
+    for suffix in ("", "-wal", "-shm"):
+        p = path + suffix
+        if os.path.exists(p):
+            os.unlink(p)
+
+
+class TestMigrations:
+    """Migrations run on every startup, are idempotent, and are tracked."""
+
+    def test_fresh_db_applies_all_migrations(self, db_path):
+        db = Database(db_path=db_path)
+        try:
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            # At least migration 001 exists; PRAGMA user_version must reflect it.
+            expected = max(v for v, _ in Database._discover_migrations())
+            assert version == expected
+            # Tables from 001 must exist.
+            tables = {
+                r[0]
+                for r in db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            assert "users" in tables
+            assert "telegram_identities" in tables
+        finally:
+            db.close()
+
+    def test_migrations_are_idempotent(self, db_path):
+        """Opening the DB twice must not re-run or corrupt migrations."""
+        db = Database(db_path=db_path)
+        v1 = db.conn.execute("PRAGMA user_version").fetchone()[0]
+        # Seed a row — proves the second init doesn't drop/recreate.
+        uid = str(uuid.uuid4())
+        db.conn.execute(
+            "INSERT INTO users (user_id, created_at) VALUES (?, ?)",
+            (uid, datetime.now(timezone.utc).isoformat()),
+        )
+        db.conn.commit()
+        db.close()
+
+        db2 = Database(db_path=db_path)
+        try:
+            v2 = db2.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert v2 == v1, "user_version moved on re-open"
+            rows = db2.conn.execute(
+                "SELECT user_id FROM users"
+            ).fetchall()
+            assert [r[0] for r in rows] == [uid], "data lost on re-init"
+        finally:
+            db2.close()
+
+    def test_legacy_db_gets_migrated(self, db_path):
+        """A pre-existing DB with user_version=0 must get migration 001 applied."""
+        # Simulate a DB from before migrations existed: a user_criteria table
+        # only, user_version left at 0.
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE user_criteria (
+                chat_id INTEGER PRIMARY KEY,
+                budget_min REAL DEFAULT 0
+            );
+        """)
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        conn.close()
+
+        db = Database(db_path=db_path)
+        try:
+            tables = {
+                r[0]
+                for r in db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            assert "users" in tables
+            assert "telegram_identities" in tables
+            # Existing user_criteria table must not be clobbered.
+            assert "user_criteria" in tables
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version >= 1
+        finally:
+            db.close()
+
+    def test_discover_migrations_orders_numerically(self, tmp_path):
+        """Discovery must sort by numeric version, not lexicographically."""
+        (tmp_path / "010_later.sql").write_text("-- noop\n")
+        (tmp_path / "002_mid.sql").write_text("-- noop\n")
+        (tmp_path / "001_first.sql").write_text("-- noop\n")
+        # Non-matching files are ignored.
+        (tmp_path / "README.md").write_text("hi")
+        (tmp_path / "draft.sql").write_text("-- noop\n")
+
+        found = Database._discover_migrations(tmp_path)
+        assert [v for v, _ in found] == [1, 2, 10]
+
+    def test_duplicate_migration_versions_raise(self, tmp_path):
+        (tmp_path / "001_a.sql").write_text("-- noop\n")
+        (tmp_path / "001_b.sql").write_text("-- noop\n")
+        with pytest.raises(ValueError, match="Duplicate migration"):
+            Database._discover_migrations(tmp_path)
+
+    def test_broken_migration_raises_and_rolls_back(
+        self, db_path, monkeypatch, tmp_path
+    ):
+        """A migration that fails mid-script must not bump user_version
+        AND must NOT leave partial statements persisted.
+
+        Proves CRITICAL #2 from the Phase 1 critique: the previous
+        implementation used ``sqlite3.executescript()`` which implicitly
+        commits pending work and leaves the first statement's side effect
+        in place when the second statement fails. The new runner wraps
+        each migration in an explicit BEGIN/COMMIT/ROLLBACK so we get real
+        transactional guarantees.
+        """
+        fake_dir = tmp_path / "mig"
+        fake_dir.mkdir()
+        (fake_dir / "001_bad.sql").write_text(
+            "CREATE TABLE ok (id INTEGER);\n"
+            "SELECT broken_syntax ( ;\n"  # guaranteed parse error
+        )
+        monkeypatch.setattr("src.database.db._MIGRATIONS_DIR", fake_dir)
+
+        with pytest.raises(RuntimeError, match="Migration 1"):
+            Database(db_path=db_path)
+
+        # Re-open raw to inspect state left behind by the failed migration.
+        conn = sqlite3.connect(db_path)
+        try:
+            # user_version is still 0 (migration's COMMIT never ran).
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+            # AND the first statement's CREATE TABLE was rolled back.
+            # This is the assertion that distinguishes a real transaction
+            # from the old executescript()-based "transaction".
+            result = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='ok'"
+            ).fetchone()
+            assert result is None, (
+                "failed migration must not leave tables behind; "
+                "found 'ok' table on disk after ROLLBACK"
+            )
+        finally:
+            conn.close()
+
+    def test_connection_pragmas_applied(self, db_path):
+        db = Database(db_path=db_path)
+        try:
+            c = db.conn
+            assert c.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+            assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+            assert c.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+            # synchronous NORMAL == 1
+            assert c.execute("PRAGMA synchronous").fetchone()[0] == 1
+        finally:
+            db.close()
+
+    def test_migration_001_file_present(self):
+        """The design requires 001_users_and_identities.sql to exist on disk."""
+        path = _MIGRATIONS_DIR / "001_users_and_identities.sql"
+        assert path.exists(), f"{path} missing"
+        sql = path.read_text()
+        assert "CREATE TABLE" in sql
+        assert "users" in sql
+        assert "telegram_identities" in sql
+
+    def test_migration_000_baseline_present_and_contains_baseline_tables(self):
+        """FLAVOR_B_DESIGN §5.5: baseline lives in 000_baseline.sql.
+
+        Proves CRITICAL #1 from the Phase 1 critique: the old
+        ``_create_tables()`` helper has been retired and replaced by a
+        numbered migration file. ALL schema — including baseline — is now
+        reached via ``_migrate()``.
+        """
+        path = _MIGRATIONS_DIR / "000_baseline.sql"
+        assert path.exists(), f"{path} missing"
+        sql = path.read_text()
+        # All three baseline tables from the pre-Flavor-B era must be here.
+        assert "CREATE TABLE IF NOT EXISTS listings" in sql
+        assert "CREATE TABLE IF NOT EXISTS analysis_results" in sql
+        assert "CREATE TABLE IF NOT EXISTS user_criteria" in sql
+        # The three indexes that used to be in _create_tables().
+        assert "idx_listings_district" in sql
+        assert "idx_listings_price" in sql
+        assert "idx_analysis_score" in sql
+
+    def test_create_tables_helper_is_retired(self):
+        """Once baseline moved into 000_baseline.sql, _create_tables() goes.
+
+        Directly checks that the attribute no longer exists on Database so
+        nothing is quietly calling a stale helper.
+        """
+        assert not hasattr(Database, "_create_tables"), (
+            "Database._create_tables() must be retired; baseline schema now "
+            "lives in migrations/000_baseline.sql (FLAVOR_B_DESIGN §5.5)"
+        )
+
+    def test_fresh_db_baseline_tables_created_by_migration(self, db_path):
+        """On a fresh DB, 000_baseline.sql must create listings/analysis/criteria.
+
+        This is the end-to-end proof that retiring _create_tables() did
+        not lose the baseline schema: migrations alone produce a usable DB.
+        """
+        db = Database(db_path=db_path)
+        try:
+            tables = {
+                r[0]
+                for r in db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            assert {"listings", "analysis_results", "user_criteria"} <= tables
+            # Indexes are registered separately.
+            indexes = {
+                r[0]
+                for r in db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='index'"
+                ).fetchall()
+            }
+            assert "idx_listings_district" in indexes
+            assert "idx_listings_price" in indexes
+            assert "idx_analysis_score" in indexes
+        finally:
+            db.close()
+
+    def test_legacy_pre_flavor_b_db_migrates_to_latest(self, db_path):
+        """A DB previously initialized by the old _create_tables() at
+        ``user_version=0`` must migrate cleanly to the highest migration
+        version present on disk.
+
+        Proves CRITICAL #1's acceptance test from the Phase 1 critique:
+        legacy DBs retain their existing tables (CREATE TABLE IF NOT EXISTS
+        is a no-op) while the new migrations extend the schema.
+        """
+        # Simulate a DB from the pre-Flavor-B era by applying a shape
+        # close to the old _create_tables() body directly. Leaves
+        # user_version=0 (the default on every fresh sqlite file).
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE listings (
+                id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                price REAL NOT NULL,
+                size_sqm REAL NOT NULL,
+                rooms REAL NOT NULL,
+                district TEXT DEFAULT '',
+                scraped_at TEXT NOT NULL
+            );
+            CREATE TABLE analysis_results (
+                listing_id TEXT PRIMARY KEY,
+                deal_score REAL,
+                FOREIGN KEY (listing_id) REFERENCES listings(id)
+            );
+            CREATE TABLE user_criteria (
+                chat_id INTEGER PRIMARY KEY,
+                budget_min REAL DEFAULT 0
+            );
+            CREATE INDEX idx_listings_district ON listings(district);
+        """)
+        # Seed a row so we can prove data survives.
+        conn.execute(
+            "INSERT INTO user_criteria (chat_id, budget_min) VALUES (?, ?)",
+            (777, 150000),
+        )
+        conn.commit()
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+        conn.close()
+
+        db = Database(db_path=db_path)
+        try:
+            # user_version advanced to the highest migration number present.
+            v = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            expected = max(ver for ver, _ in Database._discover_migrations())
+            assert v == expected
+            assert expected >= 1, "at least 001_users_and_identities must apply"
+
+            tables = {
+                r[0]
+                for r in db.conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            # Baseline tables preserved (CREATE TABLE IF NOT EXISTS no-op).
+            assert {"listings", "analysis_results", "user_criteria"} <= tables
+            # New 001 tables added.
+            assert "users" in tables
+            assert "telegram_identities" in tables
+            # Pre-existing data not clobbered.
+            row = db.conn.execute(
+                "SELECT budget_min FROM user_criteria WHERE chat_id = ?", (777,)
+            ).fetchone()
+            assert row is not None
+            assert row[0] == 150000
+        finally:
+            db.close()
+
+
+class TestSqlStatementSplitter:
+    """_split_sql_statements underpins the transactional migration runner."""
+
+    def test_splits_simple_statements(self):
+        sql = "CREATE TABLE a (id INT); CREATE TABLE b (id INT);"
+        stmts = _split_sql_statements(sql)
+        assert stmts == ["CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"]
+
+    def test_ignores_trailing_semicolon_only_whitespace(self):
+        stmts = _split_sql_statements("SELECT 1;   ;  \n;")
+        assert stmts == ["SELECT 1"]
+
+    def test_strips_line_comments(self):
+        sql = "-- leading comment\nCREATE TABLE a (id INT);\n-- trailing\n"
+        stmts = _split_sql_statements(sql)
+        assert stmts == ["CREATE TABLE a (id INT)"]
+
+    def test_preserves_semicolons_inside_single_quoted_strings(self):
+        sql = "INSERT INTO t VALUES ('a;b;c'); INSERT INTO t VALUES ('x');"
+        stmts = _split_sql_statements(sql)
+        assert stmts == [
+            "INSERT INTO t VALUES ('a;b;c')",
+            "INSERT INTO t VALUES ('x')",
+        ]
+
+    def test_handles_doubled_single_quote_escape(self):
+        sql = "INSERT INTO t VALUES ('it''s ok;');"
+        stmts = _split_sql_statements(sql)
+        assert stmts == ["INSERT INTO t VALUES ('it''s ok;')"]
+
+    def test_preserves_semicolons_inside_double_quoted_identifiers(self):
+        sql = 'CREATE TABLE "weird;name" (id INT); SELECT 1;'
+        stmts = _split_sql_statements(sql)
+        assert stmts == ['CREATE TABLE "weird;name" (id INT)', "SELECT 1"]
+
+    def test_empty_input_yields_empty_list(self):
+        assert _split_sql_statements("") == []
+        assert _split_sql_statements("-- only comment\n") == []
+        assert _split_sql_statements("   \n\n  ") == []
+
+
+# ---------------------------------------------------------------------------
+# Identity table FK + linkage tests (FLAVOR_B_DESIGN §5.1)
+# ---------------------------------------------------------------------------
+
+
+class TestIdentityTables:
+    """users + telegram_identities enforce the expected relations."""
+
+    def _make_user(self, db: Database) -> str:
+        user_id = str(uuid.uuid4())
+        db.conn.execute(
+            "INSERT INTO users (user_id, created_at) VALUES (?, ?)",
+            (user_id, datetime.now(timezone.utc).isoformat()),
+        )
+        db.conn.commit()
+        return user_id
+
+    def test_user_id_is_primary_key_unique(self, db):
+        uid = self._make_user(db)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.conn.execute(
+                "INSERT INTO users (user_id, created_at) VALUES (?, ?)",
+                (uid, datetime.now(timezone.utc).isoformat()),
+            )
+
+    def test_telegram_identity_requires_existing_user(self, db):
+        """FK enforcement must reject a chat_id pointing at no user."""
+        ghost_user = str(uuid.uuid4())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.conn.execute(
+                "INSERT INTO telegram_identities (chat_id, user_id) VALUES (?, ?)",
+                (12345, ghost_user),
+            )
+            db.conn.commit()
+
+    def test_telegram_identity_happy_path(self, db):
+        uid = self._make_user(db)
+        db.conn.execute(
+            "INSERT INTO telegram_identities (chat_id, user_id, telegram_username) "
+            "VALUES (?, ?, ?)",
+            (99, uid, "alice"),
+        )
+        db.conn.commit()
+        row = db.conn.execute(
+            "SELECT user_id, telegram_username FROM telegram_identities WHERE chat_id = ?",
+            (99,),
+        ).fetchone()
+        assert row["user_id"] == uid
+        assert row["telegram_username"] == "alice"
+
+    def test_chat_id_is_primary_key_unique(self, db):
+        uid = self._make_user(db)
+        db.conn.execute(
+            "INSERT INTO telegram_identities (chat_id, user_id) VALUES (?, ?)",
+            (42, uid),
+        )
+        db.conn.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.conn.execute(
+                "INSERT INTO telegram_identities (chat_id, user_id) VALUES (?, ?)",
+                (42, uid),
+            )
+
+    def test_delete_user_cascades_to_identities(self, db):
+        uid = self._make_user(db)
+        db.conn.execute(
+            "INSERT INTO telegram_identities (chat_id, user_id) VALUES (?, ?)",
+            (7, uid),
+        )
+        db.conn.commit()
+        db.conn.execute("DELETE FROM users WHERE user_id = ?", (uid,))
+        db.conn.commit()
+        remaining = db.conn.execute(
+            "SELECT COUNT(*) FROM telegram_identities WHERE user_id = ?",
+            (uid,),
+        ).fetchone()[0]
+        assert remaining == 0
+
+
+# ---------------------------------------------------------------------------
+# Thread-safety tests (FLAVOR_B_DESIGN §5.6)
+# ---------------------------------------------------------------------------
+
+
+class TestThreadSafety:
+    """Database must survive concurrent access from multiple threads."""
+
+    def test_per_thread_connection_objects(self, db):
+        """Each thread must see its own sqlite3.Connection instance."""
+        seen: dict[int, int] = {}
+        barrier = threading.Barrier(4)
+
+        def worker() -> int:
+            barrier.wait()
+            return id(db.conn)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(worker) for _ in range(4)]
+            ids = [f.result() for f in as_completed(futures)]
+        # Plus the main thread's connection.
+        ids.append(id(db.conn))
+        # All four worker connections should be distinct objects AND distinct
+        # from the main thread's. (threading.local returns per-thread attrs.)
+        assert len(set(ids)) == 5
+
+    def test_concurrent_save_listing(self, db_path):
+        """Hammer save_listing from 8 threads; assert no errors + final count."""
+        db = Database(db_path=db_path)
+        try:
+            n_per_thread = 25
+            threads = 8
+
+            def worker(tid: int) -> None:
+                for i in range(n_per_thread):
+                    listing = Listing(
+                        id=f"t{tid}_i{i}",
+                        platform="test",
+                        url=f"u/{tid}/{i}",
+                        title="x",
+                        price=100_000 + i,
+                        size_sqm=50,
+                        rooms=2,
+                    )
+                    db.save_listing(listing)
+
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                futures = [pool.submit(worker, t) for t in range(threads)]
+                # .result() re-raises any exception from the thread.
+                for f in as_completed(futures):
+                    f.result()
+
+            count = db.conn.execute(
+                "SELECT COUNT(*) FROM listings"
+            ).fetchone()[0]
+            assert count == threads * n_per_thread
+        finally:
+            db.close()
+
+    def test_concurrent_identity_inserts(self, db_path):
+        """Parallel user + identity inserts must all land without errors."""
+        db = Database(db_path=db_path)
+        try:
+            threads = 6
+            per_thread = 10
+            lock = threading.Lock()
+            created_ids: list[str] = []
+
+            def worker(tid: int) -> None:
+                conn = db.conn  # per-thread connection
+                for i in range(per_thread):
+                    uid = str(uuid.uuid4())
+                    chat_id = tid * 10_000 + i
+                    with lock:
+                        # Two-statement sequence — we use the write_lock via
+                        # higher-level API normally; here we exercise raw SQL
+                        # in a lock to mirror what a Service method would do.
+                        conn.execute(
+                            "INSERT INTO users (user_id, created_at) VALUES (?, ?)",
+                            (uid, datetime.now(timezone.utc).isoformat()),
+                        )
+                        conn.execute(
+                            "INSERT INTO telegram_identities (chat_id, user_id) "
+                            "VALUES (?, ?)",
+                            (chat_id, uid),
+                        )
+                        conn.commit()
+                        created_ids.append(uid)
+
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                for f in as_completed(
+                    [pool.submit(worker, t) for t in range(threads)]
+                ):
+                    f.result()
+
+            n_users = db.conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            n_ids = db.conn.execute(
+                "SELECT COUNT(*) FROM telegram_identities"
+            ).fetchone()[0]
+            assert n_users == threads * per_thread
+            assert n_ids == threads * per_thread
+            assert len(set(created_ids)) == threads * per_thread
+        finally:
+            db.close()
+
+    def test_wal_mode_persists(self, db_path):
+        """Once WAL is set, every new connection (thread) should see WAL."""
+        db = Database(db_path=db_path)
+        try:
+            results: list[str] = []
+
+            def check() -> None:
+                results.append(
+                    db.conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+                )
+
+            threads = [threading.Thread(target=check) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            assert all(r == "wal" for r in results), results
+        finally:
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# first_seen_at / time-on-market (migration 003)
+# ---------------------------------------------------------------------------
+
+
+class TestFirstSeenAt:
+    """Migration 003 + save_listing INSERT/UPDATE behaviour + days_on_market.
+
+    Design rules being verified:
+    - Migration 003 adds the column and bumps user_version to >= 3.
+    - Pre-existing rows are backfilled from scraped_at (so they don't all
+      read as "0 days on market" right after migration).
+    - INSERT stamps first_seen_at server-side (not via dataclass default).
+    - UPDATE never overwrites first_seen_at — original timestamp survives
+      every re-scrape.
+    - days_on_market clamps empty/malformed/future timestamps to 0.
+    """
+
+    def test_migration_003_adds_first_seen_at_column(self, db_path):
+        """Fresh DB ends with first_seen_at on listings + user_version >= 3."""
+        db = Database(db_path=db_path)
+        try:
+            cols = {
+                r[1]
+                for r in db.conn.execute("PRAGMA table_info(listings)").fetchall()
+            }
+            assert "first_seen_at" in cols
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version >= 3
+        finally:
+            db.close()
+
+    def test_migration_003_backfills_existing_rows(self, db_path):
+        """A pre-migration-003 DB row gets first_seen_at = scraped_at."""
+        # Seed a DB at user_version=2 (i.e. with 002_seen_deals applied but
+        # NOT 003_listings_first_seen_at) and a listing row that lacks
+        # first_seen_at. Database() must run migration 003 and backfill.
+        conn = sqlite3.connect(db_path)
+        try:
+            # Match the pre-003 listings shape (no first_seen_at column).
+            conn.executescript(
+                """
+                CREATE TABLE listings (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    size_sqm REAL NOT NULL,
+                    rooms REAL NOT NULL,
+                    address TEXT DEFAULT '',
+                    district TEXT DEFAULT '',
+                    zip_code TEXT DEFAULT '',
+                    year_built INTEGER,
+                    property_type TEXT DEFAULT 'apartment',
+                    condition TEXT,
+                    floor INTEGER,
+                    hausgeld REAL,
+                    nebenkosten REAL,
+                    energy_rating TEXT,
+                    balcony INTEGER DEFAULT 0,
+                    garden INTEGER DEFAULT 0,
+                    parking INTEGER DEFAULT 0,
+                    listing_date TEXT,
+                    description TEXT,
+                    scraped_at TEXT NOT NULL,
+                    image_urls TEXT DEFAULT '[]',
+                    is_erbbaurecht INTEGER DEFAULT 0,
+                    is_rented INTEGER DEFAULT 0,
+                    current_rent_monthly REAL,
+                    is_wbs INTEGER DEFAULT 0,
+                    sonderumlage REAL,
+                    num_units_in_building INTEGER,
+                    is_dachgeschoss INTEGER DEFAULT 0,
+                    is_ausbau_needed INTEGER DEFAULT 0,
+                    total_floors INTEGER,
+                    plot_size_sqm REAL
+                );
+                CREATE TABLE analysis_results (
+                    listing_id TEXT PRIMARY KEY,
+                    deal_score REAL,
+                    FOREIGN KEY (listing_id) REFERENCES listings(id)
+                );
+                CREATE TABLE user_criteria (
+                    chat_id INTEGER PRIMARY KEY,
+                    budget_min REAL DEFAULT 0
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO listings (id, platform, url, title, price, "
+                "size_sqm, rooms, scraped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "old_1",
+                    "immoscout",
+                    "https://example.com/old",
+                    "Old Listing",
+                    250000.0,
+                    65.0,
+                    3.0,
+                    "2026-04-01T08:00:00",
+                ),
+            )
+            # Pretend 001 + 002 already ran so the migrator only applies 003+.
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        db = Database(db_path=db_path)
+        try:
+            row = db.conn.execute(
+                "SELECT first_seen_at, scraped_at FROM listings WHERE id = ?",
+                ("old_1",),
+            ).fetchone()
+            assert row is not None
+            assert row["first_seen_at"] == "2026-04-01T08:00:00"
+            # Backfill must not touch scraped_at.
+            assert row["scraped_at"] == "2026-04-01T08:00:00"
+        finally:
+            db.close()
+
+    def test_insert_sets_first_seen_at_to_now(self, db):
+        """A brand-new listing's first_seen_at is non-empty and recent."""
+        listing = Listing(
+            id="new_insert",
+            platform="immoscout",
+            url="https://example.com/new",
+            title="Brand New",
+            price=300000,
+            size_sqm=70,
+            rooms=3,
+        )
+        before = datetime.now()
+        db.save_listing(listing)
+        after = datetime.now()
+
+        row = db.conn.execute(
+            "SELECT first_seen_at FROM listings WHERE id = ?", ("new_insert",)
+        ).fetchone()
+        assert row["first_seen_at"], "first_seen_at must be populated on INSERT"
+        stamped = datetime.fromisoformat(row["first_seen_at"])
+        # Generous window — just need to prove it's "now-ish", not the empty
+        # default and not some bogus historic value.
+        assert before - timedelta(seconds=2) <= stamped <= after + timedelta(seconds=2)
+
+    def test_update_preserves_first_seen_at(self, db):
+        """Re-saving the same listing must NOT change first_seen_at."""
+        listing = Listing(
+            id="repeat_save",
+            platform="immoscout",
+            url="https://example.com/x",
+            title="Original",
+            price=200000,
+            size_sqm=60,
+            rooms=2,
+        )
+        db.save_listing(listing)
+        original = db.conn.execute(
+            "SELECT first_seen_at FROM listings WHERE id = ?", ("repeat_save",)
+        ).fetchone()["first_seen_at"]
+        assert original  # sanity
+
+        # Make sure wall-clock time would actually move if save_listing
+        # were buggy and re-stamped on UPDATE.
+        time.sleep(0.01)
+        listing.price = 195000  # price change → triggers UPDATE path
+        # Also try to "trick" the code: hand it a different first_seen_at
+        # via the dataclass. The DB must still preserve the original.
+        listing.first_seen_at = "1999-01-01T00:00:00"
+        db.save_listing(listing)
+
+        row = db.conn.execute(
+            "SELECT price, first_seen_at FROM listings WHERE id = ?",
+            ("repeat_save",),
+        ).fetchone()
+        assert row["price"] == 195000  # update went through
+        assert row["first_seen_at"] == original, (
+            "first_seen_at must survive UPDATE no matter what the dataclass says"
+        )
+
+    def test_days_on_market_with_past_timestamp(self):
+        """Listing built with a past first_seen_at → integer days delta."""
+        five_days_ago = (datetime.now() - timedelta(days=5, hours=1)).isoformat()
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at=five_days_ago,
+        )
+        # 5 days + 1 hour rounds DOWN to 5 (timedelta.days is the floor of
+        # the day component, which is what we want for "N tage im Markt").
+        assert listing.days_on_market == 5
+
+    def test_days_on_market_empty_returns_zero(self):
+        """Empty first_seen_at is the documented sane fallback to 0."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="",
+        )
+        assert listing.days_on_market == 0
+
+    def test_days_on_market_malformed_returns_zero(self):
+        """Garbage in first_seen_at must not crash the digest."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="not-an-iso-date",
+        )
+        assert listing.days_on_market == 0
+
+    def test_days_on_market_future_returns_zero(self):
+        """Clock skew: a future first_seen_at clamps to 0, not negative."""
+        future = (datetime.now() + timedelta(days=2)).isoformat()
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at=future,
+        )
+        assert listing.days_on_market == 0
+
+    def test_listing_to_from_dict_roundtrips_first_seen_at(self):
+        """to_dict/from_dict must carry first_seen_at through unchanged."""
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="u",
+            title="t",
+            price=1,
+            size_sqm=1,
+            rooms=1,
+            first_seen_at="2026-04-15T10:00:00",
+        )
+        restored = Listing.from_dict(listing.to_dict())
+        assert restored.first_seen_at == "2026-04-15T10:00:00"
+
+    def test_days_on_market_tz_aware_does_not_crash(self):
+        """A tz-aware first_seen_at must NOT raise TypeError on subtraction.
+
+        Regression: ``datetime.fromisoformat('2026-04-01T08:00:00+00:00')``
+        returns an offset-aware datetime; subtracting from naive
+        ``datetime.now()`` raises ``TypeError``. The property must absorb
+        that — otherwise a single bad row crashes the whole digest via
+        ``_time_on_market_line()`` → ``format_deal()``.
+        """
+        listing = Listing(
+            id="t",
+            platform="x",
+            url="",
+            title="",
+            price=100000,
+            size_sqm=50,
+            rooms=2,
+            first_seen_at="2026-04-01T08:00:00+00:00",
+        )
+        # Concrete value depends on today's date; the critical assertion
+        # is "no TypeError leaked".
+        n = listing.days_on_market
+        assert isinstance(n, int)
+        assert n >= 0
+
+    def test_migration_003_handles_null_scraped_at(self, db_path):
+        """Legacy row with NULL scraped_at must not break migration 003.
+
+        Without the COALESCE in the backfill, the NOT NULL constraint on
+        first_seen_at would fire, the migration would roll back, and
+        startup would halt. We use the empty-string fallback, which
+        ``Listing.days_on_market`` already clamps to 0.
+        """
+        # Seed a pre-003 DB (user_version=2) with a row whose scraped_at
+        # column allows NULL — emulating an even older legacy shape.
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE listings (
+                    id TEXT PRIMARY KEY,
+                    platform TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    size_sqm REAL NOT NULL,
+                    rooms REAL NOT NULL,
+                    address TEXT DEFAULT '',
+                    district TEXT DEFAULT '',
+                    zip_code TEXT DEFAULT '',
+                    year_built INTEGER,
+                    property_type TEXT DEFAULT 'apartment',
+                    condition TEXT,
+                    floor INTEGER,
+                    hausgeld REAL,
+                    nebenkosten REAL,
+                    energy_rating TEXT,
+                    balcony INTEGER DEFAULT 0,
+                    garden INTEGER DEFAULT 0,
+                    parking INTEGER DEFAULT 0,
+                    listing_date TEXT,
+                    description TEXT,
+                    scraped_at TEXT,
+                    image_urls TEXT DEFAULT '[]',
+                    is_erbbaurecht INTEGER DEFAULT 0,
+                    is_rented INTEGER DEFAULT 0,
+                    current_rent_monthly REAL,
+                    is_wbs INTEGER DEFAULT 0,
+                    sonderumlage REAL,
+                    num_units_in_building INTEGER,
+                    is_dachgeschoss INTEGER DEFAULT 0,
+                    is_ausbau_needed INTEGER DEFAULT 0,
+                    total_floors INTEGER,
+                    plot_size_sqm REAL
+                );
+                CREATE TABLE analysis_results (
+                    listing_id TEXT PRIMARY KEY,
+                    deal_score REAL,
+                    FOREIGN KEY (listing_id) REFERENCES listings(id)
+                );
+                CREATE TABLE user_criteria (
+                    chat_id INTEGER PRIMARY KEY,
+                    budget_min REAL DEFAULT 0
+                );
+                """
+            )
+            # Row with NULL scraped_at — the malformed-legacy case.
+            conn.execute(
+                "INSERT INTO listings (id, platform, url, title, price, "
+                "size_sqm, rooms, scraped_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "null_scraped",
+                    "immoscout",
+                    "https://example.com/null",
+                    "Legacy Row",
+                    250000.0,
+                    65.0,
+                    3.0,
+                    None,
+                ),
+            )
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Migration must succeed despite the NULL.
+        db = Database(db_path=db_path)
+        try:
+            row = db.conn.execute(
+                "SELECT first_seen_at FROM listings WHERE id = ?",
+                ("null_scraped",),
+            ).fetchone()
+            assert row is not None
+            # COALESCE(NULL, '') -> '' → days_on_market clamps to 0.
+            assert row["first_seen_at"] == ""
+            # And user_version advanced past 003.
+            version = db.conn.execute("PRAGMA user_version").fetchone()[0]
+            assert version >= 3
+        finally:
+            db.close()

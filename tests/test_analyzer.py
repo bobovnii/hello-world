@@ -11,6 +11,7 @@ from src.analyzer.market_data import HamburgMarketData
 from src.analyzer.metrics import MetricsCalculator
 from src.analyzer.undervalue_detector import UndervalueDetector
 from src.analyzer.scorer import DealScorer
+from src.scraper.utils import ERBBAURECHT_KEYWORDS
 
 
 @pytest.fixture
@@ -243,3 +244,227 @@ class TestDealScorer:
         # Scores may differ due to different weight emphasis
         assert isinstance(score_cons, float)
         assert isinstance(score_aggr, float)
+
+
+# ---------------------------------------------------------------------------
+# iter-2 correctness fixes
+# ---------------------------------------------------------------------------
+
+
+class TestRentPrecedence:
+    """Item 3 — yield/cashflow prefer actual rent over market estimate when
+    the unit is tenanted with a known contractual rent."""
+
+    def test_uses_current_rent_when_rented_and_known(self, market_data, sample_criteria):
+        calc = MetricsCalculator(market_data)
+        # 65 m² in Harburg has avg_rent ~10/m² → ~650/mo market estimate.
+        # Force the listing rent to a clearly different number so we can
+        # detect which one was used.
+        listing = Listing(
+            id="rented_known",
+            platform="immoscout",
+            url="",
+            title="Rented",
+            price=160000,
+            size_sqm=65,
+            rooms=3,
+            district="Harburg",
+            is_rented=True,
+            current_rent_monthly=400.0,  # well below the 650 estimate
+        )
+        result = calc.calculate(listing, sample_criteria)
+        assert result.estimated_rent_monthly == pytest.approx(400.0, rel=0.001)
+        # Implied gross yield = 400 * 12 / 160_000 = 3.0
+        assert result.gross_rental_yield_pct == pytest.approx(3.0, abs=0.05)
+
+    def test_falls_back_to_market_when_not_rented(self, market_data, sample_criteria):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="vacant",
+            platform="immoscout",
+            url="",
+            title="Vacant",
+            price=160000,
+            size_sqm=65,
+            rooms=3,
+            district="Harburg",
+            is_rented=False,
+            current_rent_monthly=None,
+        )
+        result = calc.calculate(listing, sample_criteria)
+        # 65 m² × 10 €/m² ≈ 650 — market estimate is used, not None.
+        assert result.estimated_rent_monthly > 500
+        assert result.gross_rental_yield_pct > 0
+
+    def test_falls_back_to_market_when_rent_unknown(self, market_data, sample_criteria):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="rented_unknown",
+            platform="immoscout",
+            url="",
+            title="Rented but unknown rent",
+            price=160000,
+            size_sqm=65,
+            rooms=3,
+            district="Harburg",
+            is_rented=True,
+            current_rent_monthly=None,
+        )
+        result = calc.calculate(listing, sample_criteria)
+        # No actual rent → market estimate.
+        assert result.estimated_rent_monthly > 500
+
+
+class TestPurchaseCostsPct:
+    """Item 4 — commission-free platforms / explicit markers drop Maklercourtage."""
+
+    def test_default_includes_makler(self, market_data):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="im", platform="immoscout", url="", title="t",
+            price=300000, size_sqm=60, rooms=2,
+        )
+        pct = calc._purchase_costs_pct(listing)
+        # Full breakdown ≈ 11.07 (Hamburg JSON: 5.5 + 1.5 + 0.5 + 3.57)
+        assert pct == pytest.approx(11.07, abs=0.01)
+
+    def test_ohne_makler_drops_makler(self, market_data):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="om", platform="ohne-makler", url="", title="t",
+            price=300000, size_sqm=60, rooms=2,
+        )
+        pct = calc._purchase_costs_pct(listing)
+        # Without Maklercourtage → 5.5 + 1.5 + 0.5 = 7.5 (Hamburg JSON).
+        assert pct == pytest.approx(7.5, abs=0.01)
+
+    def test_kleinanzeigen_drops_makler(self, market_data):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="ka", platform="kleinanzeigen", url="", title="t",
+            price=300000, size_sqm=60, rooms=2,
+        )
+        pct = calc._purchase_costs_pct(listing)
+        assert pct == pytest.approx(7.5, abs=0.01)
+
+    def test_provisionsfrei_marker_drops_makler(self, market_data):
+        calc = MetricsCalculator(market_data)
+        # ImmoScout listing (commission-bearing platform) but description
+        # explicitly says provisionsfrei → still drop Maklercourtage.
+        listing = Listing(
+            id="pf", platform="immoscout", url="", title="Hamburg",
+            price=300000, size_sqm=60, rooms=2,
+            description="Schöne Wohnung, PROVISIONSFREI für den Käufer.",
+        )
+        pct = calc._purchase_costs_pct(listing)
+        assert pct == pytest.approx(7.5, abs=0.01)
+
+    def test_total_purchase_cost_uses_helper(self, market_data, sample_criteria):
+        calc = MetricsCalculator(market_data)
+        listing = Listing(
+            id="om2", platform="ohne-makler", url="", title="t",
+            price=300000, size_sqm=60, rooms=2, district="Harburg",
+        )
+        result = calc.calculate(listing, sample_criteria)
+        # 300_000 * 1.075 = 322_500
+        assert result.total_purchase_cost == pytest.approx(322_500.0, abs=1.0)
+
+
+class TestErbbaurechtKeywordExtensions:
+    """Item 2 — extended keyword list and Pachtvertrag regex trigger."""
+
+    def test_pachtvertrag_keyword_listed(self):
+        # The literal substring "pachtvertrag" must now match
+        # "Pachtvertrag läuft bis 2087" (case-insensitive).
+        text = "pachtvertrag läuft bis 2087"
+        assert any(kw in text for kw in ERBBAURECHT_KEYWORDS)
+
+    def test_im_erbbau_keyword_listed(self):
+        assert any(kw in "wohnung im erbbau" for kw in ERBBAURECHT_KEYWORDS)
+
+    def test_heimfallrecht_keyword_listed(self):
+        assert "heimfallrecht" in ERBBAURECHT_KEYWORDS
+
+    def test_pacht_bis_year_regex_triggers_erbbaurecht(self, market_data):
+        """Year-pinned phrasing must set is_erbbaurecht and emit the signal,
+        even when no canonical keyword appears.
+
+        We use a description that contains "pachtvertrag bis 2087" — note
+        that "pachtvertrag" IS now a keyword (item 2), so to test the regex
+        in isolation we use a phrase that omits the leading 'vertrag'."""
+        detector = UndervalueDetector(market_data)
+        listing = Listing(
+            id="pacht_year",
+            platform="test",
+            url="",
+            title="Wohnung",
+            price=200000,
+            size_sqm=60,
+            rooms=2,
+            district="Hamburg",
+            description="Schöne Wohnung. Pacht bis 2087 vereinbart.",
+        )
+        analysis = AnalysisResult(
+            listing_id="pacht_year",
+            price_vs_market_pct=0,
+            gross_rental_yield_pct=3.0,
+        )
+        reasons = detector.detect(listing, analysis)
+        assert listing.is_erbbaurecht is True
+        # And exactly one ERBBAURECHT signal is emitted (no double-emission).
+        erbbau_signals = [r for r in reasons if "ERBBAURECHT" in r]
+        assert len(erbbau_signals) == 1
+
+
+class TestSchallschutzNotNoise:
+    """Item 5 — Schallschutz is mitigation, not a noise red flag."""
+
+    def test_schallschutz_does_not_trigger_noise_signal(self, market_data):
+        detector = UndervalueDetector(market_data)
+        listing = Listing(
+            id="schall",
+            platform="test",
+            url="",
+            title="Ruhige Lage",
+            price=300000,
+            size_sqm=70,
+            rooms=3,
+            district="Eimsbüttel",
+            description="Mit hochwertigem Schallschutz an den Fenstern.",
+        )
+        analysis = AnalysisResult(
+            listing_id="schall",
+            price_vs_market_pct=0,
+            gross_rental_yield_pct=3.0,
+        )
+        reasons = detector.detect(listing, analysis)
+        # No NOISE EXPOSURE signal.
+        assert not any("NOISE EXPOSURE" in r for r in reasons)
+
+
+class TestSubScoresOnAnalysis:
+    """Item 8 — DealScorer populates the four sub-score fields."""
+
+    def test_fresh_analysis_has_nonzero_subscores(self, market_data):
+        scorer = DealScorer(market_data)
+        listing = Listing(
+            id="ss",
+            platform="test",
+            url="",
+            title="t",
+            price=200000,
+            size_sqm=60,
+            rooms=2,
+            district="Eimsbüttel",
+        )
+        analysis, _ = scorer.score_listing(listing, UserCriteria())
+        # All four populated and within bounds.
+        for v in (
+            analysis.score_price,
+            analysis.score_yield,
+            analysis.score_cashflow,
+            analysis.score_location,
+        ):
+            assert 0.0 <= v <= 100.0
+        # At minimum location_score is non-zero (Eimsbüttel is rated stable+premium).
+        assert analysis.score_location > 0

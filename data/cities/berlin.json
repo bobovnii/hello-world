@@ -1,0 +1,44 @@
+{
+  "slug": "berlin",
+  "display_name": "Berlin",
+  "bundesland": "Berlin",
+  "city": "Berlin",
+  "data_year": 2025,
+  "currency": "EUR",
+  "city_default_price_sqm": 5300,
+  "city_default_rent_sqm": 12.5,
+  "city_default_yield": 3.6,
+  "districts": {
+    "Lichtenberg": {
+      "avg_price_sqm_buy": 4900,
+      "avg_rent_sqm_month": 12.0,
+      "avg_gross_yield_pct": 3.7,
+      "trend": "rising",
+      "source": "ImmoScout24 Atlas Q1 2025 + Hypofriend Berlin guide",
+      "as_of_year": 2025
+    },
+    "Friedrichshain-Kreuzberg": {
+      "avg_price_sqm_buy": 6800,
+      "avg_rent_sqm_month": 16.0,
+      "avg_gross_yield_pct": 3.3,
+      "trend": "stable",
+      "source": "ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    },
+    "Pankow": {
+      "avg_price_sqm_buy": 5600,
+      "avg_rent_sqm_month": 13.5,
+      "avg_gross_yield_pct": 3.4,
+      "trend": "stable",
+      "source": "ImmoScout24 Atlas Q1 2025",
+      "as_of_year": 2025
+    }
+  },
+  "purchase_costs_pct": {
+    "grunderwerbsteuer": 6.0,
+    "notar": 1.5,
+    "grundbuch": 0.5,
+    "makler": 3.57
+  },
+  "notes": "Conservative seed values. Tune via scripts/update_city.py."
+}

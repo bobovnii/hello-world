@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
 from .base import BaseScraper
+from .city_registry import get_city
 from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KEYWORDS
 
 
@@ -16,8 +17,17 @@ class OhneMaklerScraper(BaseScraper):
     BASE_URL = "https://www.ohne-makler.net"
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
-        # Ohne-Makler uses a single page per city, no server-side filters
-        base = f"{self.BASE_URL}/immobilien/hamburg/hamburg/"
+        # Ohne-Makler uses a single page per city, no server-side filters.
+        # CITY-SUPPORT-1: per-city path. ``ohne_makler_path`` already
+        # contains any required Bundesland prefix (e.g. for Heide it is
+        # ``"schleswig-holstein/heide"``).
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+            path = city.ohne_makler_path
+        except ValueError:
+            path = "hamburg/hamburg"
+
+        base = f"{self.BASE_URL}/immobilien/{path}/"
         if page > 1:
             base = f"{base}?page={page}"
         return base
@@ -52,6 +62,20 @@ class OhneMaklerScraper(BaseScraper):
                         enriched = self._enrich_from_detail(listing, detail_html)
                         if enriched and self._matches_criteria(enriched, criteria):
                             if "multi_family" in criteria.property_types and enriched.property_type != "multi_family":
+                                continue
+                            # Off-plan / cooperative-share filter — must re-call
+                            # since ohne-makler overrides BaseScraper.search().
+                            if self._is_off_plan_or_coop(enriched):
+                                self.logger.info(
+                                    f"  Skipped (off-plan/coop): "
+                                    f"{(enriched.title or '')[:60]}"
+                                )
+                                continue
+                            if not self._passes_region_filter(enriched, criteria):
+                                self.logger.info(
+                                    f"  Skipped (out-of-region): "
+                                    f"{(enriched.address or enriched.title or '')[:60]}"
+                                )
                                 continue
                             seen_urls.add(enriched.url)
                             all_listings.append(enriched)
