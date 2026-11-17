@@ -186,6 +186,96 @@ def _render_kv(rows: list[tuple[str, str]]) -> str:
     return f'<div class="kv-grid">{items}</div>'
 
 
+def _num(value: float | None, fmt: str = "{:.1f}", suffix: str = "") -> str:
+    if value is None:
+        return "—"
+    return fmt.format(value) + suffix
+
+
+def _render_investor(analysis: AnalysisResult) -> str:
+    """Investor metrics + 10-year buy-and-rent scenarios (empty if unavailable)."""
+    v = getattr(analysis, "investment", None)
+    if v is None or not v.rent_month:
+        return ""
+
+    rent_label = "Ist-Kaltmiete / Monat" if v.rent_potential_pct is not None else "Erwartete Kaltmiete / Monat"
+    rows: list[tuple[str, str]] = [
+        (rent_label, _esc(f"{_money(v.rent_month)} ({v.rent_sqm:.1f} €/m²)")),
+        ("Mietquelle", _esc(v.rent_source + (
+            " — vermietet, Ist-Miete unbekannt (oft unter Markt)" if v.tenanted_rent_unknown else ""
+        ))),
+    ]
+    if v.erbbauzins_year:
+        rows.append(("Erbbauzins / Jahr (geschätzt)", _esc(_money(v.erbbauzins_year))))
+    if v.rent_potential_pct is not None:
+        rows.append(("Marktmiete / Monat", _esc(_money(v.market_rent_month))))
+        rows.append(("Mietsteigerungspotenzial", _esc(_pct(v.rent_potential_pct, sign=True))))
+    rows += [
+        ("Kaufpreisfaktor", _esc(_num(v.kaufpreisfaktor, "{:.1f}", "×"))),
+        ("Faktor Ø Lage", _esc(_num(v.district_factor, "{:.1f}", "×"))),
+        ("Grunderwerbsteuer", _esc(_money(v.grunderwerbsteuer))),
+        ("Notar + Grundbuch", _esc(_money(v.notar_grundbuch))),
+        ("Maklerprovision", _esc(_money(v.makler) if v.makler else "0 € (provisionsfrei)")),
+        ("Darlehen / Beleihung", _esc(f"{_money(v.loan)} ({v.ltv_pct:.0f} % vom Kaufpreis)")),
+        ("Nicht umlagef. Kosten / Jahr", _esc(_money(v.opex_year1) + (" (geschätzt)" if v.opex_estimated else ""))),
+        ("Reinertrag (NOI) / Jahr", _esc(_money(v.noi_year1))),
+        ("Schuldendienstdeckung (DSCR)", _esc(_num(v.dscr, "{:.2f}"))),
+        ("Zins / Tilgung Monat 1", _esc(f"{_money(v.interest_month_y1)} / {_money(v.principal_month_y1)}")),
+        ("Cashflow vor Steuer / Monat", _esc(_money(v.cf_pre_tax_month))),
+        ("Steuereffekt / Monat", _esc(_money(-v.tax_month))),
+        ("Cashflow nach Steuer / Monat", _esc(_money(v.cf_after_tax_month))),
+        ("AfA / Jahr", _esc(f"{_money(v.afa_year)} ({v.afa_rate_pct:.1f} %)")),
+        ("Miete für Cashflow 0", _esc(_num(v.break_even_rent_sqm, "{:.1f}", " €/m²"))),
+    ]
+    html_out = "<h3 class='sub'>Investoren-Kennzahlen</h3>" + _render_kv(rows)
+
+    scen = [s for s in (v.bear, v.base, v.bull) if s is not None]
+    if scen:
+        head = (
+            "<tr><th>Szenario</th><th>Wertzuwachs p.a.</th><th>Mietsteigerung p.a.</th>"
+            "<th>IRR vor St.</th><th>IRR nach St.</th><th>EK-Multiple</th>"
+            "<th>Gewinn n. St.</th><th>EK bei Verkauf</th></tr>"
+        )
+        body = "".join(
+            "<tr>"
+            f"<td>{_esc(s.name)}</td>"
+            f"<td>{_esc(_pct(s.appreciation_pct))}</td>"
+            f"<td>{_esc(_pct(s.rent_growth_pct))}</td>"
+            f"<td>{_esc(_pct(s.irr_pre_tax_pct))}</td>"
+            f"<td><b>{_esc(_pct(s.irr_after_tax_pct))}</b></td>"
+            f"<td>{_esc(_num(s.equity_multiple, '{:.2f}', '×'))}</td>"
+            f"<td>{_esc(_money(s.profit_after_tax))}</td>"
+            f"<td>{_esc(_money(s.exit_equity))}</td>"
+            "</tr>"
+            for s in scen
+        )
+        html_out += (
+            f"<h3 class='sub'>{v.hold_years}-Jahres-Szenario: kaufen &amp; vermieten</h3>"
+            f"<table class='tbl'>{head}{body}</table>"
+        )
+        if v.base and v.base.rows:
+            yhead = (
+                "<tr><th>Jahr</th><th>Miete</th><th>Kosten</th><th>Zins</th><th>Tilgung</th>"
+                "<th>CF vor St.</th><th>Steuer</th><th>CF nach St.</th><th>Restschuld</th><th>Wert</th></tr>"
+            )
+            ybody = "".join(
+                "<tr>"
+                f"<td>{r.year}</td><td>{_esc(_money(r.rent))}</td><td>{_esc(_money(r.costs))}</td>"
+                f"<td>{_esc(_money(r.interest))}</td><td>{_esc(_money(r.principal))}</td>"
+                f"<td>{_esc(_money(r.cf_pre_tax))}</td><td>{_esc(_money(r.tax))}</td>"
+                f"<td>{_esc(_money(r.cf_after_tax))}</td><td>{_esc(_money(r.loan_balance))}</td>"
+                f"<td>{_esc(_money(r.property_value))}</td>"
+                "</tr>"
+                for r in v.base.rows
+            )
+            html_out += (
+                "<details><summary>Jahr für Jahr (Basis-Szenario)</summary>"
+                f"<table class='tbl'>{yhead}{ybody}</table></details>"
+            )
+        html_out += f"<p class='note'>Annahmen: {_esc(v.assumptions_note)}.</p>"
+    return html_out
+
+
 def _render_deal(
     listing: Listing,
     analysis: AnalysisResult,
@@ -289,6 +379,8 @@ def _render_deal(
         ("Erstmals gesichtet", _esc(_time_on_market(listing))),
     ]
 
+    investor_html = _render_investor(analysis)
+
     description_html = ""
     if listing.description:
         description_html = (
@@ -314,6 +406,7 @@ def _render_deal(
         f"{flags_html}"
         "<h3 class='sub'>Finanzen</h3>"
         f"{_render_kv(fin_rows)}"
+        f"{investor_html}"
         "<h3 class='sub'>Objektdaten</h3>"
         f"{_render_kv(obj_rows)}"
         f"{description_html}"
@@ -368,6 +461,15 @@ _INLINE_CSS = """
           border-bottom: 1px dashed #eaeef2; font-size: .9rem; }
     .kv-key { color: #57606a; }
     .kv-val { font-variant-numeric: tabular-nums; font-weight: 500; }
+    .tbl { width: 100%; border-collapse: collapse; font-size: .85rem;
+           font-variant-numeric: tabular-nums; margin: .25rem 0 .5rem;
+           display: block; overflow-x: auto; }
+    .tbl th, .tbl td { padding: .25rem .5rem; border-bottom: 1px solid #eaeef2;
+                       text-align: right; white-space: nowrap; }
+    .tbl th:first-child, .tbl td:first-child { text-align: left; }
+    .tbl th { color: #57606a; font-weight: 500; }
+    details summary { cursor: pointer; color: #0969da; font-size: .9rem; margin: .25rem 0; }
+    .note { color: #57606a; font-size: .8rem; margin: .25rem 0 .5rem; }
     .desc { background: #f6f8fa; padding: .75rem 1rem; border-radius: 6px;
             white-space: pre-wrap; font-size: .92rem; }
     .deal-link-row { margin: .9rem 0 0; word-break: break-all; }

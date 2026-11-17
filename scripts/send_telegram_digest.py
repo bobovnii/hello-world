@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import yaml  # type: ignore[import-untyped]
 
+from src.analyzer.investment import InvestmentAssumptions
 from src.analyzer.market_data import CityMarketData
 from src.analyzer.market_registry import MarketRegistry
 from src.analyzer.scorer import DealScorer
@@ -126,8 +127,21 @@ def load_config(path: Path) -> dict[str, Any]:
                     f"(got {len(thesis)})"
                 )
 
+        # Fail fast on typos in investment assumptions (global + per-search).
+        try:
+            assumptions_for(cfg, s)
+        except (ValueError, TypeError) as e:
+            raise SystemExit(f"search '{s['slug']}' investment: {e}")
+
     cfg["_bot_token"] = token
     return cfg
+
+
+def assumptions_for(cfg: dict[str, Any], search: dict[str, Any]) -> InvestmentAssumptions:
+    """Global ``investment:`` block, overridden key-by-key by the search's own."""
+    merged: dict[str, Any] = dict(cfg.get("investment") or {})
+    merged.update(search.get("investment") or {})
+    return InvestmentAssumptions.from_config(merged)
 
 
 def search_to_criteria(s: dict[str, Any]) -> UserCriteria:
@@ -158,7 +172,8 @@ def run_search(criteria: UserCriteria, max_pages: int) -> tuple[list[Listing], l
     scrapers = [
         ImmoScoutScraper(rate_limit_min=2, rate_limit_max=4),
         KleinanzeigenScraper(rate_limit_min=2, rate_limit_max=4),
-        ImmoweltScraper(rate_limit_min=2, rate_limit_max=4),
+        # Immowelt (relaunched Nov 2026) is stricter about bursts; go a bit slower.
+        ImmoweltScraper(rate_limit_min=4, rate_limit_max=7),
         OhneMaklerScraper(rate_limit_min=2, rate_limit_max=4),
     ]
     all_listings: list[Listing] = []
@@ -346,6 +361,63 @@ def _guess_district_from_address(listing: Listing, city: CityMarketData | None) 
     return city.display_name
 
 
+def _signed(v: float) -> str:
+    return f"{'+' if v >= 0 else '−'}{abs(v):,.0f}"
+
+
+def _investor_lines(analysis) -> list[str]:
+    """Investor block for the card: rent + multiple, cash flow, 10-year view.
+
+    Empty when the analysis carries no ``investment`` view (reloaded from
+    DB, or uninhabitable unit with zero rent) — the card then falls back
+    to the legacy one-line Rendite/CF summary.
+    """
+    v = getattr(analysis, "investment", None)
+    if v is None or not v.rent_month:
+        return []
+    lines: list[str] = []
+
+    if v.rent_potential_pct is not None:
+        rent = (
+            f"🏦 Ist-Miete {v.rent_month:,.0f} €/Mo ({v.rent_sqm:.1f} €/m²) · "
+            f"Markt ~{v.market_rent_month:,.0f} € ({v.rent_potential_pct:+.0f}%)"
+        )
+    else:
+        rent = f"🏦 Miete ~{v.rent_month:,.0f} €/Mo ({v.rent_sqm:.1f} €/m², {v.rent_source})"
+        if v.tenanted_rent_unknown:
+            rent += " · ⚠️ vermietet, Ist-Miete unbekannt (oft unter Markt)"
+    if v.erbbauzins_year:
+        rent += f"\n⚠️ Erbbauzins ~{v.erbbauzins_year / 12:,.0f} €/Mo geschätzt (eingerechnet)"
+    lines.append(rent)
+
+    mult = f"📊 Brutto {analysis.gross_rental_yield_pct:.1f}% · Netto {analysis.net_rental_yield_pct:.1f}%"
+    if v.kaufpreisfaktor:
+        mult += f" · Faktor {v.kaufpreisfaktor:.1f}"
+        if v.district_factor:
+            mult += f" (Ø {v.district_factor:.1f})"
+    lines.append(mult)
+
+    cf = (
+        f"💶 CF {_signed(v.cf_pre_tax_month)} €/Mo · nach Steuer {_signed(v.cf_after_tax_month)} € · "
+        f"EK {v.equity:,.0f} €"
+    )
+    if v.break_even_rent_sqm:
+        cf += f" · CF=0 ab {v.break_even_rent_sqm:.1f} €/m²"
+    lines.append(cf)
+
+    b, lo, hi = v.base, v.bear, v.bull
+    if b and b.irr_after_tax_pct is not None:
+        rng = ""
+        if lo and hi and lo.irr_after_tax_pct is not None and hi.irr_after_tax_pct is not None:
+            rng = f" ({lo.irr_after_tax_pct:.1f}…{hi.irr_after_tax_pct:.1f})"
+        mult_txt = f" · EK×{b.equity_multiple:.1f}" if b.equity_multiple is not None else ""
+        lines.append(
+            f"🔟 {v.hold_years} J vermieten: IRR {b.irr_after_tax_pct:.1f}% n. St.{rng} · "
+            f"Gewinn {_signed(b.profit_after_tax)} €{mult_txt}"
+        )
+    return lines
+
+
 def format_deal(listing: Listing, analysis, city: CityMarketData | None = None) -> str:
     """One message per deal, Telegram MarkdownV1 (legacy) style.
 
@@ -381,14 +453,25 @@ def format_deal(listing: Listing, analysis, city: CityMarketData | None = None) 
     bj_line = _baujahr_energie_line(listing)
     bj_block = f"\n{bj_line}" if bj_line else ""
 
+    inv_lines = _investor_lines(analysis)
+    if inv_lines:
+        score_line = f"🎯 Score {analysis.deal_score:.0f}/100 {sparkline}"
+        inv_block = "\n" + "\n".join(inv_lines)
+    else:
+        score_line = (
+            f"🎯 Score {analysis.deal_score:.0f}/100 {sparkline} · "
+            f"Rendite {analysis.gross_rental_yield_pct:.1f}% · "
+            f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo"
+        )
+        inv_block = ""
+
     msg = (
         f"🏠 *{district}* · {listing.rooms:.0f} Zi · {listing.size_sqm:.0f} m²\n"
         f"💰 *{listing.price:,.0f} €*  ({analysis.price_per_sqm:,.0f} €/m² · "
         f"{analysis.price_vs_market_pct:+.0f}%) · "
         f"💵 {analysis.total_purchase_cost:,.0f} € all-in\n"
-        f"🎯 Score {analysis.deal_score:.0f}/100 {sparkline} · "
-        f"Rendite {analysis.gross_rental_yield_pct:.1f}% · "
-        f"CF {cf_sign}{analysis.monthly_cashflow:,.0f}€/Mo"
+        f"{score_line}"
+        f"{inv_block}"
         f"{bj_block}\n"
         f"{tom_line}"
         f"{flag_line}"
@@ -528,7 +611,7 @@ async def main_async(args) -> int:
         except ValueError as e:
             logger.error("%s: %s", slug, e)
             continue
-        scorer = DealScorer(city_market)
+        scorer = DealScorer(city_market, assumptions_for(cfg, search))
 
         try:
             listings, status_lines = run_search(criteria, args.max_pages)

@@ -29,6 +29,18 @@ output:
   language: en
 
 
+# Investor-view assumptions (10-year buy-and-rent model, src/analyzer/investment.py).
+# Every key is optional; a search can override any of them in its own `investment:` block.
+investment:
+  hold_years: 10          # 10 = Spekulationsfrist → sale is income-tax-free
+  tax_rate_pct: 42        # your marginal income-tax rate (losses offset other income)
+  vacancy_pct: 3
+  sale_cost_pct: 3
+  # rent_growth_pct / appreciation_pct are keyed by district trend:
+  # rent_growth_pct: {rising: 2.5, stable: 2.0, declining: 1.0}
+  # appreciation_pct: {rising: 2.0, stable: 1.5, declining: 0.5}
+
+
 # List of saved searches. Each one runs independently and posts its own section.
 #
 # Optional fields:

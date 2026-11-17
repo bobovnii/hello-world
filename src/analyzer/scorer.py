@@ -37,9 +37,9 @@ WEIGHT_PRESETS = {
 class DealScorer:
     """Scores and ranks real estate deals."""
 
-    def __init__(self, market_data: HamburgMarketData):
+    def __init__(self, market_data: HamburgMarketData, assumptions=None):
         self.market = market_data
-        self.metrics_calc = MetricsCalculator(market_data)
+        self.metrics_calc = MetricsCalculator(market_data, assumptions)
         self.undervalue_detector = UndervalueDetector(market_data)
 
     def score_listing(
@@ -51,6 +51,10 @@ class DealScorer:
 
         # Detect undervalue reasons
         reasons = self.undervalue_detector.detect(listing, analysis)
+        # The detector may enrich the listing from its description
+        # (is_rented + actual rent, Ausbau, ...). Recompute so yield,
+        # cash flow and the 10-year view use the enriched facts.
+        analysis = self.metrics_calc.calculate(listing, criteria)
         analysis.undervalue_reasons = reasons
 
         # Get weights based on risk tolerance

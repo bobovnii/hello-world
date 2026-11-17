@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, fields, asdict
 from datetime import datetime
 
 
@@ -210,9 +210,11 @@ class AnalysisResult:
     score_yield: float = 0.0
     score_cashflow: float = 0.0
     score_location: float = 0.0
+    # InvestmentView (src/analyzer/investment.py); in-memory only, like the sub-scores.
+    investment: object | None = None
 
     def to_dict(self) -> dict:
-        d = asdict(self)
+        d = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "investment"}
         d["undervalue_reasons"] = json.dumps(d["undervalue_reasons"])
         # Strip sub-scores: not persisted yet (no DB column). Pulling them
         # into to_dict() would break save_analysis() — it does `INSERT OR

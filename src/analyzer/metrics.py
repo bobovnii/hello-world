@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from src.database.models import Listing, UserCriteria, AnalysisResult
+from .investment import InvestmentAssumptions, annual_operating_costs, build_investment_view
 from .market_data import HamburgMarketData
 
 
 class MetricsCalculator:
     """Calculate investment metrics for a listing based on user criteria."""
 
-    def __init__(self, market_data: HamburgMarketData):
+    def __init__(
+        self,
+        market_data: HamburgMarketData,
+        assumptions: InvestmentAssumptions | None = None,
+    ):
         self.market = market_data
+        self.assumptions = assumptions or InvestmentAssumptions()
 
     def calculate(self, listing: Listing, criteria: UserCriteria) -> AnalysisResult:
         """Calculate all investment metrics for a listing.
@@ -64,12 +70,11 @@ class MetricsCalculator:
         else:
             estimated_rent = self.market.estimate_monthly_rent(district, listing.size_sqm)
 
-        # Annual figures
+        # Annual figures: only non-recoverable costs count against Kaltmiete
         annual_rent = estimated_rent * 12
-        annual_hausgeld = (listing.hausgeld or 0) * 12
-        annual_reserves = listing.price * 0.01  # 1% maintenance reserve
-        annual_vacancy = annual_rent * 0.03  # 3% vacancy assumption
-        annual_costs = annual_hausgeld + annual_reserves + annual_vacancy
+        annual_costs, _ = annual_operating_costs(
+            listing, annual_rent, self.assumptions, district_avg
+        )
 
         # Yields
         gross_yield = (annual_rent / listing.price * 100) if listing.price else 0
@@ -88,7 +93,27 @@ class MetricsCalculator:
         annual_cashflow = monthly_cashflow * 12
         coc_return = (annual_cashflow / equity_required * 100) if equity_required else 0
 
+        market_rent = (
+            0.0 if is_uninhabitable
+            else self.market.estimate_monthly_rent(district, listing.size_sqm)
+        )
+        investment = build_investment_view(
+            listing,
+            criteria,
+            self.market,
+            rent_month=estimated_rent,
+            market_rent_month=market_rent,
+            total_purchase_cost=total_purchase_cost,
+            purchase_costs_breakdown=self.market.purchase_costs_breakdown,
+            commission_free=self._is_commission_free(listing),
+            equity=equity_required,
+            loan=loan_amount,
+            monthly_payment=mortgage_monthly,
+            assumptions=self.assumptions,
+        )
+
         return AnalysisResult(
+            investment=investment,
             listing_id=listing.id,
             price_per_sqm=round(price_per_sqm, 2),
             district_avg_price_sqm=round(district_avg, 2),
@@ -133,15 +158,17 @@ class MetricsCalculator:
         editing the JSON re-tunes the calculation without code changes.
         """
         breakdown = self.market.purchase_costs_breakdown
+        if self._is_commission_free(listing):
+            return sum(v for k, v in breakdown.items() if k != "makler")
+        return sum(breakdown.values())
+
+    def _is_commission_free(self, listing: Listing) -> bool:
         platform = (listing.platform or "").lower().strip()
         desc_lower = (listing.description or "").lower()
-        commission_free = (
+        return (
             platform in self._COMMISSION_FREE_PLATFORMS
             or any(marker in desc_lower for marker in self._COMMISSION_FREE_MARKERS)
         )
-        if commission_free:
-            return sum(v for k, v in breakdown.items() if k != "makler")
-        return sum(breakdown.values())
 
     @staticmethod
     def _calculate_mortgage(
