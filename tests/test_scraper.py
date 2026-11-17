@@ -114,8 +114,9 @@ class TestSearchURLBuilding:
         scraper = ImmoweltScraper()
         criteria = UserCriteria(budget_max=300000)
         url = scraper.build_search_url(criteria)
-        assert "immowelt.de" in url
-        assert "hamburg" in url
+        assert "immowelt.de/classified-search" in url
+        assert "locations=AD08DE1113" in url
+        assert "priceMax=300000" in url
 
     def test_ohne_makler_url(self):
         scraper = OhneMaklerScraper()
@@ -148,24 +149,24 @@ class TestCityAwareSearchURLs:
         scraper = ImmoweltScraper()
         criteria = UserCriteria(city="berlin", budget_max=300000)
         url = scraper.build_search_url(criteria)
-        assert "/berlin/" in url
-        assert "/hamburg/" not in url
+        assert "locations=AD08DE8634" in url
+        assert "AD08DE1113" not in url
 
     def test_immowelt_dresden(self):
         scraper = ImmoweltScraper()
         url = scraper.build_search_url(UserCriteria(city="dresden"))
-        assert "/dresden/" in url
+        assert "locations=AD08DE9991" in url
 
     def test_immowelt_heide(self):
         scraper = ImmoweltScraper()
         url = scraper.build_search_url(UserCriteria(city="heide"))
-        assert "/heide/" in url
+        assert "locations=AD08DE6" in url
 
     def test_immowelt_default_is_hamburg(self):
         """Bare UserCriteria() must keep the legacy Hamburg URL shape."""
         scraper = ImmoweltScraper()
         url = scraper.build_search_url(UserCriteria())
-        assert "/hamburg/" in url
+        assert "locations=AD08DE1113" in url
 
     # ------------------------------------------------------------------
     # kleinanzeigen
@@ -532,3 +533,128 @@ class TestEnrichedFieldDetection:
         )
         assert not BaseScraper._matches_criteria(listing_2rooms, criteria)
         assert BaseScraper._matches_criteria(listing_3rooms, criteria)
+
+
+class TestKleinanzeigenNov2026Markup:
+    """Kleinanzeigen relaunched its markup in autumn 2026: search cards are
+    ``<article data-adid data-href>`` without the ``aditem`` class, paging is
+    a ``/seite:N/`` path segment, and detail pages A/B between the classic
+    ``addetailslist`` and a restyled ``#viewad-details`` list."""
+
+    SEARCH_HTML = """
+    <html><body>
+      <article class="flex justify-between p-medium" data-adid="111" data-href="/s-anzeige/foo/111-196-9503">
+        <a href="/s-anzeige/foo/111-196-9503">x</a><a href="/s-anzeige/foo/111-196-9503">dup</a>
+      </article>
+      <article class="aditem" data-adid="222"><a href="/s-anzeige/bar/222-196-9503">y</a></article>
+    </body></html>"""
+
+    DETAIL_HTML = """
+    <html><body>
+      <h1 id="viewad-title">Altbauperle</h1>
+      <h2 id="viewad-price">249.000 €</h2>
+      <span id="viewad-locality">22761 Altona - Hamburg Bahrenfeld</span>
+      <div id="viewad-details"><div><ul>
+        <li class="flex"><span>Wohnfläche</span><span class="text-right">105,36 m²</span></li>
+        <li class="flex"><span>Zimmer</span><span class="text-right">3</span></li>
+        <li class="flex"><span>Wohnungstyp</span><span class="text-right">Erdgeschosswohnung</span></li>
+        <li class="flex"><span>Baujahr</span><span class="text-right">1905</span></li>
+        <li class="flex"><span>Hausgeld</span><span class="text-right">338 €</span></li>
+      </ul></div></div>
+      <p id="viewad-description-text">Schöne Wohnung mit Balkon.</p>
+    </body></html>"""
+
+    def test_search_cards_without_aditem_class(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        res = s.parse_search_results(self.SEARCH_HTML)
+        assert [r["id"] for r in res] == ["111", "222"]
+        assert res[0]["url"] == "https://www.kleinanzeigen.de/s-anzeige/foo/111-196-9503"
+
+    def test_page_number_is_path_segment(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        url = s.build_search_url(UserCriteria(budget_max=300000), page=2)
+        assert "/hamburg/seite:2/c196l9409" in url
+        assert "seite:2" not in url.split("?", 1)[1]
+
+    def test_restyled_detail_page(self):
+        s = KleinanzeigenScraper(rate_limit_min=0, rate_limit_max=0)
+        listing = s.parse_listing_detail(self.DETAIL_HTML, "https://www.kleinanzeigen.de/s-anzeige/foo/111-196-9503")
+        assert listing is not None
+        assert listing.price == 249000
+        assert listing.size_sqm == 105.36
+        assert listing.rooms == 3
+        assert listing.year_built == 1905
+        assert listing.hausgeld == 338
+        assert listing.zip_code == "22761"
+        assert listing.district == "Altona"
+        assert listing.property_type == "apartment"
+
+
+class TestImmoweltNov2026:
+    """Immowelt relaunched in autumn 2026: filters only work on
+    ``/classified-search``; the old /liste/ URLs redirect and drop all params."""
+
+    CARD_HTML = """
+    <html><body>
+    <div data-testid="serp-core-classified-card-testid">
+      <a href="/expose/abc-123">x</a>
+      <div data-testid="cardmfe-description-box-text-test-id">
+        <div data-testid="cardmfe-price-testid">769.000\u00a0€ <span>7.539\u00a0€/m²</span></div>
+        <div>Wohnung zum Kauf</div>
+        <div class="css-1f1n8kn">4 Zimmer · 102 m² · 3. Geschoss</div>
+        <div data-testid="cardmfe-description-box-address">Lyserstraße 12, Bahrenfeld, Hamburg (22761)</div>
+      </div>
+    </div>
+    <div data-testid="serp-core-classified-card-testid">
+      <a href="/expose/def-456">y</a>
+      <div data-testid="cardmfe-price-testid">1.296.900\u00a0€</div>
+      <div>Mehrfamilienhaus zum Kauf</div>
+      <div>10 Zimmer · 310,5 m²</div>
+      <div data-testid="cardmfe-description-box-address">Niendorf, Hamburg (22459)</div>
+    </div>
+    </body></html>"""
+
+    def test_cards_without_keyfacts_testid(self):
+        s = ImmoweltScraper(rate_limit_min=0, rate_limit_max=0)
+        cards = s._parse_search_cards(self.CARD_HTML)
+        assert len(cards) == 2
+        a, b = cards
+        assert (a.price, a.size_sqm, a.rooms, a.floor) == (769000, 102, 4, 3)
+        assert a.zip_code == "22761" and a.district == "Altona"
+        assert a.property_type == "apartment"
+        assert (b.price, b.size_sqm, b.rooms) == (1296900, 310.5, 10)
+        assert b.property_type == "multi_family"
+
+    def test_classified_search_url_params(self):
+        s = ImmoweltScraper()
+        c = UserCriteria(budget_min=50000, budget_max=250000, min_rooms=2, min_size_sqm=30, property_types=["apartment"])
+        url = s.build_search_url(c, page=2)
+        for token in ("distributionTypes=Buy", "estateTypes=Apartment", "locations=AD08DE1113",
+                      "priceMin=50000", "priceMax=250000", "spaceMin=30", "numberOfRoomsMin=2", "page=2"):
+            assert token in url, token
+        mfh = s.build_search_url(UserCriteria(property_types=["multi_family"], min_rooms=2))
+        assert "estateTypes=House" in mfh and "numberOfRoomsMin" not in mfh
+
+    def test_shared_session_and_run_wide_pacing(self, monkeypatch):
+        """Every search's scraper reuses one session (stable UA) and requests
+        are spaced >= MIN_GAP_SECONDS apart across instances."""
+        import src.scraper.immowelt as iw
+        a = ImmoweltScraper(rate_limit_min=0, rate_limit_max=0)
+        b = ImmoweltScraper(rate_limit_min=0, rate_limit_max=0)
+        assert a.session is b.session
+        a.close()
+        assert b.session is ImmoweltScraper._shared_session
+
+        clock = {"t": 1000.0}
+        sleeps = []
+        monkeypatch.setattr(iw.time, "time", lambda: clock["t"])
+        def fake_sleep(s):
+            sleeps.append(s)
+            clock["t"] += s
+        monkeypatch.setattr(iw.time, "sleep", fake_sleep)
+        monkeypatch.setattr(iw.BaseScraper, "fetch", lambda self, url: "ok")
+        monkeypatch.setattr(ImmoweltScraper, "_last_request_at", 0.0)
+        assert a.fetch("u1") == "ok"
+        clock["t"] += 5
+        assert b.fetch("u2") == "ok"
+        assert sleeps == [pytest.approx(ImmoweltScraper.MIN_GAP_SECONDS - 5)]

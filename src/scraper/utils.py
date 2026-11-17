@@ -129,11 +129,22 @@ def clean_rooms(text: str) -> float | None:
     return None
 
 
-def fetch_page(url: str, session: requests.Session | None = None, timeout: int = 30) -> str | None:
-    """Fetch a page with proper headers. Returns HTML or None on error."""
+def fetch_page(
+    url: str,
+    session: requests.Session | None = None,
+    timeout: int = 30,
+    rotate_headers: bool = True,
+) -> str | None:
+    """Fetch a page with proper headers. Returns HTML or None on error.
+
+    ``rotate_headers=False`` keeps the session's own headers (stable
+    User-Agent). Sites that pair cookies with a UA fingerprint (immowelt
+    since its Nov 2026 relaunch) answer 403 when the UA changes mid-session.
+    """
     requester = session or requests
+    headers = get_headers() if (rotate_headers or session is None) else None
     try:
-        resp = requester.get(url, headers=get_headers(), timeout=timeout)
+        resp = requester.get(url, headers=headers, timeout=timeout)
         resp.raise_for_status()
         return resp.text
     except requests.RequestException as e:

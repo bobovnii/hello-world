@@ -8,7 +8,10 @@ directly from the search result cards.
 from __future__ import annotations
 
 import re
+import threading
+import time
 
+import requests
 from bs4 import BeautifulSoup
 
 from src.database.models import Listing, UserCriteria
@@ -20,40 +23,103 @@ from .utils import clean_price, clean_size, clean_rooms, detect_district, MFH_KE
 class ImmoweltScraper(BaseScraper):
     PLATFORM_NAME = "immowelt"
     BASE_URL = "https://www.immowelt.de"
+    HAMBURG_LOCATION_ID = "AD08DE1113"
+    BACKOFF_SECONDS = 20
+    # Immowelt 403s as soon as the UA changes within a cookie session.
+    ROTATE_HEADERS = False
+    # DataDome 403s back-to-back searches; one shared session and a run-wide
+    # gap between requests keeps every search answering 200.
+    MIN_GAP_SECONDS = 30.0
+    _shared_session: requests.Session | None = None
+    _last_request_at: float = 0.0
+    _pace_lock = threading.Lock()
+
+    def __init__(self, rate_limit_min: float = 2.0, rate_limit_max: float = 5.0):
+        super().__init__(rate_limit_min, rate_limit_max)
+        cls = ImmoweltScraper
+        with cls._pace_lock:
+            if cls._shared_session is None:
+                cls._shared_session = self.session
+            else:
+                self.session.close()
+        self.session = cls._shared_session
+
+    def fetch(self, url: str) -> str | None:
+        cls = ImmoweltScraper
+        with cls._pace_lock:
+            wait = cls._last_request_at + self.MIN_GAP_SECONDS - time.time()
+            if wait > 0:
+                time.sleep(wait)
+            try:
+                return super().fetch(url)
+            finally:
+                cls._last_request_at = time.time()
+
+    def close(self):
+        pass  # shared session lives for the whole run
+
+    def _passes_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Zip-range gate (shared with kleinanzeigen). Immowelt location ids
+        are municipality-level so this mostly guards against the Heide id
+        (AD08DE6) pulling in neighbouring Dithmarschen villages."""
+        return self._zip_region_filter(listing, criteria)
 
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
+        """Build an immowelt ``classified-search`` URL (site relaunch, Nov 2026).
+
+        The old ``/liste/<city>/wohnungen/kaufen?pmin=…`` URLs now 301 to a
+        SEO page that silently drops every query parameter, so filters and
+        pagination only work through ``/classified-search``. Verified live:
+        ``priceMin``/``priceMax``/``numberOfRoomsMin``/``spaceMin``/``page``
+        are honoured; there is no recognised multi-family ``estateTypes``
+        value, so MFH searches use ``House`` and rely on the post-filter in
+        ``search()``.
+        """
         prop_type = criteria.property_types[0] if criteria.property_types else "apartment"
-        prop_map = {
-            "apartment": "wohnungen",
-            "house": "haeuser",
-            "multi_family": "haeuser",  # MFH listed under houses on Immowelt
-        }
-        prop_path = prop_map.get(prop_type, "wohnungen")
+        estate_type = {
+            "apartment": "Apartment",
+            "house": "House",
+            "multi_family": "House",
+        }.get(prop_type, "Apartment")
 
-        params = []
-        if criteria.budget_min > 0:
-            params.append(f"pmin={int(criteria.budget_min)}")
-        if criteria.budget_max < 50_000_000:
-            params.append(f"pmax={int(criteria.budget_max)}")
-        if criteria.min_size_sqm > 0:
-            params.append(f"amin={int(criteria.min_size_sqm)}")
-        if criteria.min_rooms > 1:
-            params.append(f"rmin={int(criteria.min_rooms)}")
-        if page > 1:
-            params.append(f"sp={page}")
-
-        # CITY-SUPPORT-1: per-city path slug. Falls back to Hamburg if
-        # the criteria doesn't carry a known city.
         try:
             city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
-            city_path = city.immowelt_path
+            location_id = city.immowelt_location_id or self.HAMBURG_LOCATION_ID
         except ValueError:
-            city_path = "hamburg"
+            location_id = self.HAMBURG_LOCATION_ID
 
-        base = f"{self.BASE_URL}/liste/{city_path}/{prop_path}/kaufen"
-        if params:
-            return f"{base}?{'&'.join(params)}"
-        return base
+        params = [
+            "distributionTypes=Buy",
+            f"estateTypes={estate_type}",
+            f"locations={location_id}",
+        ]
+        if criteria.budget_min > 0:
+            params.append(f"priceMin={int(criteria.budget_min)}")
+        if criteria.budget_max < 50_000_000:
+            params.append(f"priceMax={int(criteria.budget_max)}")
+        if criteria.min_size_sqm > 0:
+            params.append(f"spaceMin={int(criteria.min_size_sqm)}")
+        if criteria.min_rooms > 1 and prop_type != "multi_family":
+            params.append(f"numberOfRoomsMin={int(criteria.min_rooms)}")
+        if page > 1:
+            params.append(f"page={page}")
+        return f"{self.BASE_URL}/classified-search?{'&'.join(params)}"
+
+    def _fetch_results_page(self, criteria: UserCriteria, page: int) -> str | None:
+        """Fetch one results page; one back-off retry on failure, then give up.
+
+        Immowelt sits behind DataDome, which answers 403 + captcha once an IP
+        looks automated. We respect that: back off once, and if it still
+        refuses, stop this search rather than trying to route around it.
+        """
+        url = self.build_search_url(criteria, page)
+        self.logger.info(f"Scraping page {page}: {url}")
+        html = self.fetch(url)
+        if html:
+            return html
+        self.logger.warning(f"Failed to fetch page {page}, backing off {self.BACKOFF_SECONDS}s")
+        time.sleep(self.BACKOFF_SECONDS)
+        return self.fetch(url)
 
     def search(self, criteria: UserCriteria, max_pages: int = 5) -> list[Listing]:
         """Override search to extract data directly from search result cards.
@@ -65,10 +131,7 @@ class ImmoweltScraper(BaseScraper):
         seen_urls: set[str] = set()
 
         for page in range(1, max_pages + 1):
-            url = self.build_search_url(criteria, page)
-            self.logger.info(f"Scraping page {page}: {url}")
-
-            html = self.fetch(url)
+            html = self._fetch_results_page(criteria, page)
             if not html:
                 self.logger.warning(f"Failed to fetch page {page}, stopping")
                 break
@@ -173,6 +236,18 @@ class ImmoweltScraper(BaseScraper):
         keyfacts_el = card.select_one('[data-testid="cardmfe-keyfacts-testid"]')
         if keyfacts_el:
             keyfacts_text = keyfacts_el.get_text(strip=True)
+        else:
+            # Nov 2026 markup: keyfacts live in a hashed-class div
+            # ("4 Zimmer · 102 m² · 3. Geschoss"). Locate it via the text
+            # node containing "Zimmer" or "m²" (but not the "€/m²" price).
+            keyfacts_text = ""
+            for node in card.find_all(string=re.compile(r"Zimmer|m²")):
+                txt = node.parent.get_text(" ", strip=True) if node.parent else str(node)
+                if "€/m²" in txt:
+                    continue
+                keyfacts_text = txt
+                break
+        if keyfacts_text:
             # Parse rooms
             rooms_match = re.search(r"([\d,]+)\s*Zimmer", keyfacts_text)
             if rooms_match:
@@ -227,11 +302,18 @@ class ImmoweltScraper(BaseScraper):
 
         # Detect property type from card text
         property_type = "apartment"
-        full_text = card.get_text().lower()
-        if "mehrfamilienhaus" in full_text or "anlageimmobilie" in full_text:
+        full_text = card.get_text(" ").lower()
+        type_label_match = re.search(r"([a-zäöüß-]+)\s+zum kauf", full_text)
+        type_label = type_label_match.group(1) if type_label_match else ""
+        if type_label in ("mehrfamilienhaus", "anlageimmobilie", "wohn-/geschäftshaus", "zweifamilienhaus"):
             property_type = "multi_family"
-        elif any(w in full_text for w in ("einfamilienhaus", "doppelhaushälfte", "reihenhaus", "reihenendhaus", "villa")):
+        elif "haus" in type_label or type_label in ("villa", "bungalow"):
             property_type = "house"
+        elif not type_label:
+            if "mehrfamilienhaus" in full_text or "anlageimmobilie" in full_text:
+                property_type = "multi_family"
+            elif any(w in full_text for w in ("einfamilienhaus", "doppelhaushälfte", "reihenhaus", "reihenendhaus", "villa")):
+                property_type = "house"
 
         # Detect tags (Neu, etc.)
         tags = [t.get_text(strip=True) for t in card.select('[data-testid*="cardmfe-tag"]')]

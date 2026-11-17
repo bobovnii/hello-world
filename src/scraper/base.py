@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 
 import requests
 
 from src.database.models import Listing, UserCriteria
+from .city_registry import get_city
 from .utils import (
     RateLimiter,
     get_headers,
@@ -25,6 +27,9 @@ class BaseScraper(ABC):
 
     PLATFORM_NAME: str = ""
     BASE_URL: str = ""
+    # Rotate the User-Agent on every request (legacy behaviour). Scrapers
+    # whose target ties cookies to a UA fingerprint set this to False.
+    ROTATE_HEADERS: bool = True
 
     def __init__(self, rate_limit_min: float = 2.0, rate_limit_max: float = 5.0):
         self.session = requests.Session()
@@ -42,7 +47,7 @@ class BaseScraper(ABC):
             pass  # robots.txt check failure should not block scraping
 
         self.rate_limiter.wait()
-        return fetch_page(url, self.session)
+        return fetch_page(url, self.session, rotate_headers=self.ROTATE_HEADERS)
 
     @abstractmethod
     def build_search_url(self, criteria: UserCriteria, page: int = 1) -> str:
@@ -139,6 +144,42 @@ class BaseScraper(ABC):
         zip-range / address-token gate.
         """
         return True
+
+    _ZIP_RE = re.compile(r"\b(\d{5})\b")
+
+    def _zip_region_filter(self, listing: Listing, criteria: UserCriteria) -> bool:
+        """Shared zip-range gate used by scrapers that opt into region filtering.
+
+        Two-step gate:
+        1. Extract a 5-digit zip from zip_code/address/title; if it's in any
+           of the city's ``zip_ranges``, accept, otherwise reject.
+        2. If no zip extractable, fall back to a city-name token match
+           against ``city.address_tokens``.
+        Unknown city → fail-open (True).
+        """
+        try:
+            city = get_city(getattr(criteria, "city", "hamburg") or "hamburg")
+        except ValueError:
+            return True
+
+        sources = [
+            getattr(listing, "zip_code", "") or "",
+            listing.address or "",
+            listing.title or "",
+        ]
+        zip_str = ""
+        for s in sources:
+            m = self._ZIP_RE.search(s)
+            if m:
+                zip_str = m.group(1)
+                break
+
+        if zip_str:
+            z = int(zip_str)
+            return any(low <= z <= high for (low, high) in city.zip_ranges)
+
+        addr_lower = (listing.address or listing.title or "").lower()
+        return any(tok.lower() in addr_lower for tok in city.address_tokens)
 
     @staticmethod
     def _is_off_plan_or_coop(listing: Listing) -> bool:

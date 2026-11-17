@@ -35,7 +35,7 @@ class CityInfo:
     """
 
     slug: str  # "hamburg" — lowercase, used in YAML
-    immowelt_path: str  # path slug for immowelt URL, e.g. "hamburg"
+    immowelt_path: str  # legacy path slug for immowelt URL, e.g. "hamburg" (kept for reference)
     kleinanzeigen_path: str  # path slug for kleinanzeigen URL, e.g. "hamburg"
     kleinanzeigen_location_id: str  # e.g. "l9409" — REQUIRED for kleinanzeigen URL
     ohne_makler_path: str  # path under /immobilien/{X}/, e.g. "hamburg/hamburg" or "schleswig-holstein/heide"
@@ -54,6 +54,11 @@ class CityInfo:
     # Berlin/Dresden/Heide don't currently have known overlaps, so empty
     # lists are fine — we can tighten later if false positives appear.
     exclude_address_tokens: list[str] = field(default_factory=list)
+    # Immowelt ``classified-search`` location id (Nov 2026 site). AD08 =
+    # municipality level. Find new ones by opening the old
+    # ``/liste/<city>/wohnungen/kaufen`` URL in a browser and reading the
+    # trailing ``ad08deNNNN`` token of the redirect target (uppercased).
+    immowelt_location_id: str = ""
 
 
 # Hamburg geocode comes from the existing immoscout.py constants
@@ -64,6 +69,7 @@ CITIES: dict[str, CityInfo] = {
     "hamburg": CityInfo(
         slug="hamburg",
         immowelt_path="hamburg",
+        immowelt_location_id="AD08DE1113",
         kleinanzeigen_path="hamburg",
         kleinanzeigen_location_id="l9409",
         ohne_makler_path="hamburg/hamburg",
@@ -82,6 +88,7 @@ CITIES: dict[str, CityInfo] = {
     "berlin": CityInfo(
         slug="berlin",
         immowelt_path="berlin",
+        immowelt_location_id="AD08DE8634",
         kleinanzeigen_path="berlin",
         # l3331 = Berlin (verified from kleinanzeigen URL pattern
         # /berlin/c<cat>l3331). Used by every Berlin sale ad.
@@ -96,6 +103,7 @@ CITIES: dict[str, CityInfo] = {
     "dresden": CityInfo(
         slug="dresden",
         immowelt_path="dresden",
+        immowelt_location_id="AD08DE9991",
         kleinanzeigen_path="dresden",
         # l3820 = Dresden - Sachsen on kleinanzeigen. Verified live via
         # the location-autocomplete endpoint
@@ -118,6 +126,7 @@ CITIES: dict[str, CityInfo] = {
     "heide": CityInfo(
         slug="heide",
         immowelt_path="heide",
+        immowelt_location_id="AD08DE6",
         kleinanzeigen_path="heide",
         # l836 = "Heide - Dithmarschen" on kleinanzeigen. Verified live
         # via the location-autocomplete endpoint
